@@ -135,6 +135,16 @@ fn print_ticket_table(section: &str, tickets: &[Ticket]) {
     println!("{table}");
 }
 
+// Returns the worktree name if cwd is inside <root>/worktrees/<name>/.
+fn cwd_worktree(root: &std::path::Path) -> Option<String> {
+    let cwd = std::env::current_dir().ok()?;
+    let rel = cwd.strip_prefix(root.join("worktrees")).ok()?;
+    rel.components()
+        .next()
+        .and_then(|c| c.as_os_str().to_str())
+        .map(|s| s.to_string())
+}
+
 fn list(matches: &ArgMatches) -> Result<()> {
     let root = get_repo_root(matches)?;
     let json = matches.get_flag("json");
@@ -143,8 +153,16 @@ fn list(matches: &ArgMatches) -> Result<()> {
         .map(|s| s.as_str())
         .unwrap_or("pending");
 
-    if matches.get_one::<String>("workstream").is_some() {
-        let (ws_name, ws_dir) = resolve_workstream(matches, &root)?;
+    let single_ws: Option<(String, PathBuf)> = if matches.get_one::<String>("workstream").is_some()
+    {
+        Some(resolve_workstream(matches, &root)?)
+    } else if let Some(name) = cwd_worktree(&root) {
+        Some((name.clone(), workstream_dir(&root, &name)))
+    } else {
+        None
+    };
+
+    if let Some((ws_name, ws_dir)) = single_ws {
         let tickets = filter_tickets(load_tickets(&ws_dir)?, filter);
         if json {
             let val: Vec<serde_json::Value> = tickets
