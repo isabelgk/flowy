@@ -285,8 +285,6 @@ fn wt_archive_force_flag_bypasses_dirty_check() {
     assert!(!worktree.exists(), "worktree should be removed");
 }
 
-// --- t show ---
-
 #[test]
 fn t_show_displays_ticket_content() {
     let repo = TestRepo::new();
@@ -351,8 +349,6 @@ fn t_show_unknown_id_errors() {
         .assert()
         .failure();
 }
-
-// --- t done variants ---
 
 #[test]
 fn t_done_wont_implement() {
@@ -429,8 +425,6 @@ fn t_done_json() {
     assert_eq!(json["status"], "complete");
 }
 
-// --- t add variants ---
-
 #[test]
 fn t_add_with_description() {
     let repo = TestRepo::new();
@@ -502,8 +496,6 @@ fn t_add_increments_ticket_number() {
     assert!(ticket.exists());
 }
 
-// --- t journal ---
-
 #[test]
 fn t_journal_appends_entry() {
     let repo = TestRepo::new();
@@ -562,8 +554,6 @@ fn t_journal_with_heading() {
     assert!(content.contains("Day 1"));
     assert!(content.contains("Progress"));
 }
-
-// --- t search ---
 
 #[test]
 fn t_search_returns_matching_tickets() {
@@ -639,8 +629,6 @@ fn t_search_no_results() {
         .stdout("");
 }
 
-// --- t status ---
-
 #[test]
 fn t_status_shows_counts() {
     let repo = TestRepo::new();
@@ -706,8 +694,6 @@ fn t_status_json() {
     assert!(!json["branch"].as_str().unwrap_or("").is_empty());
 }
 
-// --- t edit ---
-
 #[test]
 fn t_edit_opens_ticket_in_editor() {
     let repo = TestRepo::new();
@@ -726,8 +712,6 @@ fn t_edit_opens_ticket_in_editor() {
         .assert()
         .success();
 }
-
-// --- wt JSON output variants ---
 
 #[test]
 fn wt_new_json() {
