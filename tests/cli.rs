@@ -833,3 +833,70 @@ fn wt_unarchive_json() {
         .success()
         .stdout(predicate::str::contains("\"ok\": true"));
 }
+
+#[test]
+fn init_creates_project_structure() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join("myproject");
+
+    assert_cmd::Command::cargo_bin("flowy")
+        .unwrap()
+        .args(["init", project.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Initialized"));
+
+    assert!(project.join(".bare").is_dir(), ".bare should exist");
+    assert!(project.join(".git").is_file(), ".git pointer should exist");
+    assert!(
+        project.join("worktrees").join("main").is_dir(),
+        "worktrees/main should exist"
+    );
+    assert!(
+        project
+            .join("notes")
+            .join("workstreams")
+            .join("main")
+            .is_dir(),
+        "notes/workstreams/main should exist"
+    );
+    assert!(
+        project
+            .join("notes")
+            .join("workstreams")
+            .join("archive")
+            .is_dir(),
+        "notes/workstreams/archive should exist"
+    );
+
+    let meta = read_meta(&project.join("notes").join("workstreams").join("main"));
+    assert_eq!(meta.worktree.branch, "main");
+    assert!(!meta.created.is_empty());
+}
+
+#[test]
+fn init_json_output() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join("myproject");
+
+    assert_cmd::Command::cargo_bin("flowy")
+        .unwrap()
+        .args(["init", project.to_str().unwrap(), "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"ok\": true"));
+}
+
+#[test]
+fn init_fails_if_directory_exists() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join("existing");
+    fs::create_dir_all(&project).unwrap();
+
+    assert_cmd::Command::cargo_bin("flowy")
+        .unwrap()
+        .args(["init", project.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already exists"));
+}

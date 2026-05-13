@@ -31,6 +31,98 @@ fn get_repo_root(matches: &ArgMatches) -> Result<PathBuf> {
     }
 }
 
+pub fn init(matches: &ArgMatches) -> Result<()> {
+    let json = matches.get_flag("json");
+    let name = matches.get_one::<String>("name").unwrap();
+
+    let root = PathBuf::from(name);
+    if root.exists() {
+        bail!("'{name}' already exists");
+    }
+    std::fs::create_dir_all(&root).with_context(|| format!("creating {name}"))?;
+
+    let init_src = root.join(".init-src");
+    let status = Command::new("git")
+        .args(["init", "-b", "main"])
+        .arg(&init_src)
+        .status()
+        .context("running git init")?;
+    if !status.success() {
+        bail!("git init failed");
+    }
+
+    let status = Command::new("git")
+        .args([
+            "commit",
+            "--allow-empty",
+            "--allow-empty-message",
+            "--message",
+            "",
+        ])
+        .current_dir(&init_src)
+        .status()
+        .context("running git commit")?;
+    if !status.success() {
+        bail!("git commit failed");
+    }
+
+    let bare_dir = root.join(".bare");
+    let status = Command::new("git")
+        .args(["clone", "--bare"])
+        .arg(&init_src)
+        .arg(&bare_dir)
+        .status()
+        .context("running git clone --bare")?;
+    if !status.success() {
+        bail!("git clone --bare failed");
+    }
+
+    std::fs::remove_dir_all(&init_src).context("removing .init-src")?;
+
+    let status = Command::new("git")
+        .args(["remote", "remove", "origin"])
+        .current_dir(&bare_dir)
+        .status()
+        .context("running git remote remove origin")?;
+    if !status.success() {
+        bail!("git remote remove origin failed");
+    }
+
+    std::fs::write(root.join(".git"), "gitdir: ./.bare\n").context("writing .git pointer")?;
+    std::fs::create_dir_all(root.join("worktrees")).context("creating worktrees/")?;
+    std::fs::create_dir_all(root.join("notes").join("workstreams").join("archive"))
+        .context("creating notes/workstreams/archive/")?;
+
+    let worktree_path = root.join("worktrees").join("main");
+    let status = Command::new("git")
+        .args(["worktree", "add"])
+        .arg(&worktree_path)
+        .arg("main")
+        .current_dir(&bare_dir)
+        .status()
+        .context("running git worktree add")?;
+    if !status.success() {
+        bail!("git worktree add failed");
+    }
+
+    let ws_dir = crate::core::names::workstream_dir(&root, "main");
+    std::fs::create_dir_all(ws_dir.join("tickets")).context("creating tickets dir")?;
+    let meta = Meta {
+        created: chrono::Utc::now().to_rfc3339(),
+        worktree: WorktreeMeta {
+            path: worktree_path.to_string_lossy().into_owned(),
+            branch: "main".to_string(),
+        },
+    };
+    write_meta(&ws_dir, &meta)?;
+
+    if json {
+        return print_json(&serde_json::json!({"ok": true}));
+    }
+    println!("Initialized {name}");
+    Ok(())
+}
+
 pub fn clone(matches: &ArgMatches) -> Result<()> {
     let json = matches.get_flag("json");
     let url = matches.get_one::<String>("url").unwrap();
