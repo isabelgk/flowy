@@ -137,7 +137,7 @@ fn ls(matches: &ArgMatches) -> Result<()> {
 
     let output = Command::new("git")
         .args(["worktree", "list", "--porcelain"])
-        .current_dir(&root)
+        .current_dir(root.join(".bare"))
         .output()
         .context("running git worktree list")?;
     if !output.status.success() {
