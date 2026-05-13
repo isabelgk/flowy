@@ -156,10 +156,8 @@ fn list(matches: &ArgMatches) -> Result<()> {
     let single_ws: Option<(String, PathBuf)> = if matches.get_one::<String>("workstream").is_some()
     {
         Some(resolve_workstream(matches, &root)?)
-    } else if let Some(name) = cwd_worktree(&root) {
-        Some((name.clone(), workstream_dir(&root, &name)))
     } else {
-        None
+        cwd_worktree(&root).map(|name| (name.clone(), workstream_dir(&root, &name)))
     };
 
     if let Some((ws_name, ws_dir)) = single_ws {
@@ -644,9 +642,7 @@ fn interactive_search(tickets: &[SearchTicket]) -> Result<Option<(String, u32, S
                     }));
                 }
                 KeyCode::Up => {
-                    if selected > 0 {
-                        selected -= 1;
-                    }
+                    selected = selected.saturating_sub(1);
                 }
                 KeyCode::Down => {
                     if selected < results.len().saturating_sub(1) {
@@ -765,4 +761,114 @@ fn status(matches: &ArgMatches) -> Result<()> {
     println!("Branch:     {branch}");
     println!("Tickets:    {pending} pending / {total} total");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::ticket::{Status, Ticket};
+
+    fn make_ticket(number: u32, status: Status) -> Ticket {
+        Ticket {
+            number,
+            slug: format!("ticket-{number}"),
+            title: format!("Ticket {number}"),
+            status,
+            content: String::new(),
+        }
+    }
+
+    #[test]
+    fn slugify_basic() {
+        assert_eq!(slugify("Hello, World!"), "hello-world");
+        assert_eq!(slugify("My Ticket"), "my-ticket");
+    }
+
+    #[test]
+    fn slugify_leading_and_trailing_non_alnum() {
+        assert_eq!(slugify("  leading spaces"), "leading-spaces");
+        assert_eq!(slugify("trailing!!"), "trailing");
+    }
+
+    #[test]
+    fn slugify_consecutive_separators_collapse() {
+        assert_eq!(slugify("a---b"), "a-b");
+        assert_eq!(slugify("a  b"), "a-b");
+    }
+
+    #[test]
+    fn slugify_empty_and_all_punctuation() {
+        assert_eq!(slugify(""), "");
+        assert_eq!(slugify("!!!"), "");
+    }
+
+    #[test]
+    fn filter_tickets_all() {
+        let tickets = vec![
+            make_ticket(1, Status::Pending),
+            make_ticket(2, Status::Complete),
+            make_ticket(3, Status::WontImplement),
+        ];
+        assert_eq!(filter_tickets(tickets, "all").len(), 3);
+    }
+
+    #[test]
+    fn filter_tickets_by_status() {
+        let tickets = vec![
+            make_ticket(1, Status::Pending),
+            make_ticket(2, Status::Complete),
+            make_ticket(3, Status::WontImplement),
+        ];
+        assert_eq!(filter_tickets(tickets.clone(), "complete").len(), 1);
+        assert_eq!(filter_tickets(tickets.clone(), "wont-implement").len(), 1);
+        assert_eq!(filter_tickets(tickets.clone(), "pending").len(), 1);
+        // default arm returns pending
+        assert_eq!(filter_tickets(tickets, "").len(), 1);
+    }
+
+    #[test]
+    fn filter_tickets_empty_input() {
+        assert_eq!(filter_tickets(vec![], "all").len(), 0);
+        assert_eq!(filter_tickets(vec![], "pending").len(), 0);
+    }
+
+    #[test]
+    fn rewrite_h1_pending_to_complete() {
+        let out = rewrite_h1_and_append("# My Task\n", false, false, None);
+        assert_eq!(out, "# completed: My Task\n");
+    }
+
+    #[test]
+    fn rewrite_h1_complete_with_summary() {
+        let out = rewrite_h1_and_append("# My Task\n", false, false, Some("Done"));
+        assert!(out.starts_with("# completed: My Task\n"));
+        assert!(out.contains("\n## Summary\n\nDone\n"));
+    }
+
+    #[test]
+    fn rewrite_h1_pending_to_wont_implement() {
+        let out = rewrite_h1_and_append("# My Task\n", false, true, None);
+        assert_eq!(out, "# wont-implement: My Task\n");
+    }
+
+    #[test]
+    fn rewrite_h1_complete_to_reopen() {
+        let out = rewrite_h1_and_append("# completed: My Task\n", true, false, None);
+        assert_eq!(out, "# My Task\n");
+    }
+
+    #[test]
+    fn rewrite_h1_wont_implement_to_reopen() {
+        let out = rewrite_h1_and_append("# wont-implement: My Task\n", true, false, None);
+        assert_eq!(out, "# My Task\n");
+    }
+
+    #[test]
+    fn rewrite_h1_multiline_only_first_h1_changed() {
+        let input = "# My Task\n\nSome body text.\n\n## Section\n\nMore content.\n";
+        let out = rewrite_h1_and_append(input, false, false, None);
+        assert!(out.starts_with("# completed: My Task\n"));
+        assert!(out.contains("Some body text."));
+        assert!(out.contains("## Section"));
+    }
 }

@@ -388,3 +388,48 @@ fn unarchive(matches: &ArgMatches) -> Result<()> {
     println!("Unarchived {name}");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_age_under_minute_is_now() {
+        assert_eq!(format_age(0), "now");
+        assert_eq!(format_age(59), "now");
+        assert_eq!(format_age(-10), "now");
+    }
+
+    #[test]
+    fn format_age_minutes() {
+        assert_eq!(format_age(60), "1m");
+        assert_eq!(format_age(3599), "59m");
+    }
+
+    #[test]
+    fn format_age_hours() {
+        assert_eq!(format_age(3600), "1h");
+        assert_eq!(format_age(86399), "23h");
+    }
+
+    #[test]
+    fn format_age_days() {
+        assert_eq!(format_age(86400), "1d");
+        assert_eq!(format_age(7 * 86400 - 1), "6d");
+    }
+
+    #[test]
+    fn format_age_weeks() {
+        assert_eq!(format_age(7 * 86400), "1w");
+    }
+
+    #[test]
+    fn format_age_months() {
+        assert_eq!(format_age(30 * 86400), "1mo");
+    }
+
+    #[test]
+    fn format_age_years() {
+        assert_eq!(format_age(365 * 86400), "1y");
+    }
+}
