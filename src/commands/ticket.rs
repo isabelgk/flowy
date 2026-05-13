@@ -264,8 +264,18 @@ fn add(matches: &ArgMatches) -> Result<()> {
     let number = existing.iter().map(|t| t.number).max().unwrap_or(0) + 1;
     let path = ticket_path(&ws_dir, number);
 
-    let escaped = title.replace('\\', r"\\").replace('"', r#"\""#);
-    let mut content = format!("+++\nstatus = \"pending\"\ntitle = \"{escaped}\"\n+++\n");
+    #[derive(serde::Serialize)]
+    struct NewFrontmatter<'a> {
+        status: &'a str,
+        title: &'a str,
+    }
+    let fm = toml::to_string(&NewFrontmatter {
+        status: "pending",
+        title,
+    })
+    .context("serializing ticket frontmatter")?;
+    let fm = fm.trim_end_matches('\n');
+    let mut content = format!("+++\n{fm}\n+++\n");
     if let Some(desc) = description {
         content.push('\n');
         content.push_str(desc);
@@ -369,7 +379,11 @@ fn rewrite_status_and_append(
     };
 
     if let Some(s) = summary {
-        if result.ends_with('\n') {
+        let already_has_summary =
+            result.contains("\n## Summary\n") || result.starts_with("## Summary\n");
+        if already_has_summary {
+            result
+        } else if result.ends_with('\n') {
             format!("{result}\n## Summary\n\n{s}\n")
         } else {
             format!("{result}\n\n## Summary\n\n{s}\n")

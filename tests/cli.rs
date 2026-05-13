@@ -921,3 +921,216 @@ fn init_fails_if_directory_exists() {
         .failure()
         .stderr(predicate::str::contains("already exists"));
 }
+
+// Bug fix: titles with special characters (tabs, newlines) that the old manual
+// escaping silently corrupted now round-trip correctly through TOML frontmatter.
+#[test]
+fn t_add_title_with_special_chars_round_trips() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat"])
+        .assert()
+        .success();
+
+    // Tab is the character the old manual escaping silently corrupted.
+    let title = "first\tsecond";
+    repo.cmd()
+        .args(["t", "add", "-w", "feat", title])
+        .assert()
+        .success();
+
+    let output = repo
+        .cmd()
+        .args(["--json", "t", "show", "-w", "feat", "1"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        json["title"].as_str().unwrap(),
+        title,
+        "title should survive TOML round-trip unchanged"
+    );
+}
+
+// Bug fix: running `done --summary` twice must not append a second ## Summary.
+#[test]
+fn t_done_summary_not_duplicated_on_second_call() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["t", "add", "-w", "feat", "A ticket"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .args(["t", "done", "-w", "feat", "1", "--summary", "First"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["t", "done", "-w", "feat", "1", "--reopen"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["t", "done", "-w", "feat", "1", "--summary", "Second"])
+        .assert()
+        .success();
+
+    let ticket_path = repo
+        .root
+        .join("notes")
+        .join("workstreams")
+        .join("feat")
+        .join("tickets")
+        .join("001.md");
+    let content = fs::read_to_string(&ticket_path).unwrap();
+    assert_eq!(
+        content.matches("## Summary").count(),
+        1,
+        "exactly one ## Summary section should exist"
+    );
+}
+
+// Bug fix: if `git worktree add` fails during unarchive the notes must be
+// rolled back to the archive directory, not left in the active workstreams dir.
+#[test]
+fn wt_unarchive_rolls_back_notes_on_git_failure() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["wt", "archive", "feat"])
+        .assert()
+        .success();
+
+    // Delete the branch from the bare repo so git worktree add will fail.
+    std::process::Command::new("git")
+        .args(["branch", "-D", "feat"])
+        .current_dir(repo.root.join(".bare"))
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .status()
+        .expect("git branch -D");
+
+    repo.cmd()
+        .args(["wt", "unarchive", "feat"])
+        .assert()
+        .failure();
+
+    // Notes must be rolled back to archive, not stranded in workstreams.
+    let archive_dir = repo
+        .root
+        .join("notes")
+        .join("workstreams")
+        .join("archive")
+        .join("feat");
+    assert!(
+        archive_dir.is_dir(),
+        "notes should be rolled back to archive after failed unarchive"
+    );
+    let ws_dir = repo.root.join("notes").join("workstreams").join("feat");
+    assert!(
+        !ws_dir.exists(),
+        "notes must not remain in workstreams after failed unarchive"
+    );
+}
+
+// Bug fix: `clone` must scaffold the default branch worktree and notes dir,
+// matching what `init` does for the initial main worktree.
+#[test]
+fn clone_scaffolds_default_branch_workstream() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+
+    let git_env = [
+        ("GIT_AUTHOR_NAME", "Test"),
+        ("GIT_AUTHOR_EMAIL", "test@example.com"),
+        ("GIT_COMMITTER_NAME", "Test"),
+        ("GIT_COMMITTER_EMAIL", "test@example.com"),
+    ];
+    std::process::Command::new("git")
+        .args(["init", "-b", "main", src.to_str().unwrap()])
+        .envs(git_env.iter().cloned())
+        .status()
+        .expect("git init");
+    std::process::Command::new("git")
+        .args(["commit", "--allow-empty", "-m", "init"])
+        .current_dir(&src)
+        .envs(git_env.iter().cloned())
+        .status()
+        .expect("git commit");
+
+    assert_cmd::Command::cargo_bin("flowy")
+        .unwrap()
+        .current_dir(tmp.path())
+        .args(["clone", src.to_str().unwrap(), "project"])
+        .envs(git_env.iter().cloned())
+        .assert()
+        .success();
+
+    let project = tmp.path().join("project");
+    assert!(project.join(".bare").is_dir(), ".bare should exist");
+    assert!(
+        project.join("worktrees").join("main").is_dir(),
+        "worktrees/main should exist after clone"
+    );
+    let ws_main = project.join("notes").join("workstreams").join("main");
+    assert!(
+        ws_main.is_dir(),
+        "notes/workstreams/main should exist after clone"
+    );
+    let meta = read_meta(&ws_main);
+    assert_eq!(meta.worktree.branch, "main");
+}
+
+#[test]
+fn clone_scaffolds_non_main_default_branch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+
+    let git_env = [
+        ("GIT_AUTHOR_NAME", "Test"),
+        ("GIT_AUTHOR_EMAIL", "test@example.com"),
+        ("GIT_COMMITTER_NAME", "Test"),
+        ("GIT_COMMITTER_EMAIL", "test@example.com"),
+    ];
+    std::process::Command::new("git")
+        .args(["init", "-b", "trunk", src.to_str().unwrap()])
+        .envs(git_env.iter().cloned())
+        .status()
+        .expect("git init");
+    std::process::Command::new("git")
+        .args(["commit", "--allow-empty", "-m", "init"])
+        .current_dir(&src)
+        .envs(git_env.iter().cloned())
+        .status()
+        .expect("git commit");
+
+    assert_cmd::Command::cargo_bin("flowy")
+        .unwrap()
+        .current_dir(tmp.path())
+        .args(["clone", src.to_str().unwrap(), "project"])
+        .envs(git_env.iter().cloned())
+        .assert()
+        .success();
+
+    let project = tmp.path().join("project");
+    assert!(
+        project.join("worktrees").join("trunk").is_dir(),
+        "worktrees/trunk should exist after clone"
+    );
+    let ws = project.join("notes").join("workstreams").join("trunk");
+    assert!(
+        ws.is_dir(),
+        "notes/workstreams/trunk should exist after clone"
+    );
+    let meta = read_meta(&ws);
+    assert_eq!(meta.worktree.branch, "trunk");
+}

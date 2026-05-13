@@ -143,25 +143,66 @@ pub fn clone(matches: &ArgMatches) -> Result<()> {
             .to_string()
     };
 
-    let bare_dir = PathBuf::from(&name).join(".bare");
-
     let status = Command::new("git")
         .args(["clone", "--bare", url])
-        .arg(&bare_dir)
+        .arg(PathBuf::from(&name).join(".bare"))
         .status()
         .context("running git clone")?;
     if !status.success() {
         bail!("git clone --bare failed");
     }
 
-    // .git pointer so git commands work from project root
-    std::fs::write(PathBuf::from(&name).join(".git"), "gitdir: ./.bare\n")
-        .context("writing .git pointer")?;
+    let root = PathBuf::from(&name)
+        .canonicalize()
+        .with_context(|| format!("resolving absolute path for {name}"))?;
+    let bare_dir = root.join(".bare");
 
-    let root = PathBuf::from(&name);
+    // .git pointer so git commands work from project root
+    std::fs::write(root.join(".git"), "gitdir: ./.bare\n").context("writing .git pointer")?;
+
     std::fs::create_dir_all(root.join("worktrees")).context("creating worktrees/")?;
     std::fs::create_dir_all(root.join("notes").join("workstreams").join("archive"))
         .context("creating notes/workstreams/archive/")?;
+
+    // Detect the default branch and scaffold its worktree and notes.
+    let head_out = Command::new("git")
+        .args(["symbolic-ref", "HEAD"])
+        .current_dir(&bare_dir)
+        .output()
+        .context("running git symbolic-ref HEAD")?;
+    let default_branch = if head_out.status.success() {
+        String::from_utf8_lossy(&head_out.stdout)
+            .trim()
+            .strip_prefix("refs/heads/")
+            .unwrap_or("main")
+            .to_string()
+    } else {
+        "main".to_string()
+    };
+
+    let safe = safe_name(&default_branch);
+    let worktree_path = root.join("worktrees").join(&safe);
+    let status = Command::new("git")
+        .args(["worktree", "add"])
+        .arg(&worktree_path)
+        .arg(&default_branch)
+        .current_dir(&bare_dir)
+        .status()
+        .context("running git worktree add")?;
+    if !status.success() {
+        bail!("git worktree add failed");
+    }
+
+    let ws_dir = crate::core::names::workstream_dir(&root, &safe);
+    std::fs::create_dir_all(ws_dir.join("tickets")).context("creating tickets dir")?;
+    let meta = Meta {
+        created: chrono::Utc::now().to_rfc3339(),
+        worktree: WorktreeMeta {
+            path: worktree_path.to_string_lossy().into_owned(),
+            branch: default_branch,
+        },
+    };
+    write_meta(&ws_dir, &meta)?;
 
     if json {
         return print_json(&serde_json::json!({"ok": true}));
@@ -425,16 +466,18 @@ fn archive(matches: &ArgMatches) -> Result<()> {
             .with_context(|| format!("moving {} to {}", ws_dir.display(), archive_dir.display()))?;
     }
 
-    let mut cmd = Command::new("git");
-    cmd.arg("worktree").arg("remove");
-    if needs_force {
-        cmd.arg("--force");
-    }
-    cmd.arg(&worktree_path).current_dir(root.join(".bare"));
+    if worktree_path.exists() {
+        let mut cmd = Command::new("git");
+        cmd.arg("worktree").arg("remove");
+        if needs_force {
+            cmd.arg("--force");
+        }
+        cmd.arg(&worktree_path).current_dir(root.join(".bare"));
 
-    let status = cmd.status().context("running git worktree remove")?;
-    if !status.success() {
-        bail!("git worktree remove failed");
+        let status = cmd.status().context("running git worktree remove")?;
+        if !status.success() {
+            bail!("git worktree remove failed");
+        }
     }
 
     if json {
@@ -454,8 +497,19 @@ fn unarchive(matches: &ArgMatches) -> Result<()> {
 
     let branch = &meta.worktree.branch;
     let worktree_path = worktrees_dir(&root).join(name);
+    let ws_dir = crate::core::names::workstream_dir(&root, name);
 
-    // Branch already exists in the bare repo; no -b flag needed
+    // Move notes first so that if worktree add fails we can roll back and leave
+    // the workstream cleanly in the archive.
+    std::fs::rename(&archive_dir, &ws_dir).with_context(|| {
+        format!(
+            "restoring {} from {}",
+            ws_dir.display(),
+            archive_dir.display()
+        )
+    })?;
+
+    // Branch already exists in the bare repo; no -b flag needed.
     let status = Command::new("git")
         .arg("worktree")
         .arg("add")
@@ -465,17 +519,9 @@ fn unarchive(matches: &ArgMatches) -> Result<()> {
         .status()
         .context("running git worktree add")?;
     if !status.success() {
+        let _ = std::fs::rename(&ws_dir, &archive_dir);
         bail!("git worktree add failed");
     }
-
-    let ws_dir = crate::core::names::workstream_dir(&root, name);
-    std::fs::rename(&archive_dir, &ws_dir).with_context(|| {
-        format!(
-            "restoring {} from {}",
-            ws_dir.display(),
-            archive_dir.display()
-        )
-    })?;
 
     if json {
         return print_json(&serde_json::json!({"ok": true}));
