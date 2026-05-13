@@ -1,0 +1,19 @@
+[package]
+name = "flowy"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "flowy"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["cargo"] }
+comfy-table = "7"
+nucleo-matcher = "0.3"
+owo-colors = "4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
