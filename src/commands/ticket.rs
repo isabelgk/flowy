@@ -45,7 +45,6 @@ fn resolve_workstream(matches: &ArgMatches, root: &Path) -> Result<(String, Path
     } else {
         let out = Command::new("git")
             .args(["branch", "--show-current"])
-            .current_dir(root)
             .output()
             .context("running git branch --show-current")?;
         let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
