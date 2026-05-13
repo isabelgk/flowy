@@ -62,7 +62,7 @@ fn t_add_creates_ticket_with_h1() {
         .join("workstreams")
         .join("test-branch")
         .join("tickets")
-        .join("001-my-ticket.md");
+        .join("001.md");
     assert!(ticket.exists(), "ticket file should exist");
     let content = fs::read_to_string(&ticket).unwrap();
     assert!(content.starts_with("+++\n"));
@@ -92,7 +92,7 @@ fn t_done_rewrites_heading_and_appends_summary() {
         .join("workstreams")
         .join("test-branch")
         .join("tickets")
-        .join("001-my-ticket.md");
+        .join("001.md");
     let content = fs::read_to_string(&ticket).unwrap();
     assert!(
         content.contains("status = \"complete\""),
@@ -141,7 +141,6 @@ fn t_list_json_correct_fields() {
     let arr = json.as_array().expect("JSON array");
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["number"], 1);
-    assert_eq!(arr[0]["slug"], "my-ticket");
     assert_eq!(arr[0]["status"], "complete");
 }
 
@@ -333,7 +332,6 @@ fn t_show_json() {
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["number"], 1);
-    assert_eq!(json["slug"], "my-ticket");
     assert_eq!(json["title"], "My ticket");
     assert_eq!(json["status"], "pending");
 }
@@ -371,7 +369,7 @@ fn t_done_wont_implement() {
 
     let ticket = repo
         .root
-        .join("notes/workstreams/test-branch/tickets/001-my-ticket.md");
+        .join("notes/workstreams/test-branch/tickets/001.md");
     let content = fs::read_to_string(ticket).unwrap();
     assert!(content.contains("status = \"wont-implement\""));
     assert!(content.contains("title = \"My ticket\""));
@@ -400,7 +398,7 @@ fn t_done_reopen_complete_ticket() {
 
     let ticket = repo
         .root
-        .join("notes/workstreams/test-branch/tickets/001-my-ticket.md");
+        .join("notes/workstreams/test-branch/tickets/001.md");
     let content = fs::read_to_string(ticket).unwrap();
     assert!(content.contains("status = \"pending\""));
     assert!(content.contains("title = \"My ticket\""));
@@ -452,7 +450,7 @@ fn t_add_with_description() {
 
     let ticket = repo
         .root
-        .join("notes/workstreams/test-branch/tickets/001-my-ticket.md");
+        .join("notes/workstreams/test-branch/tickets/001.md");
     let content = fs::read_to_string(ticket).unwrap();
     assert!(content.starts_with("+++\n"));
     assert!(content.contains("title = \"My ticket\""));
@@ -475,7 +473,6 @@ fn t_add_json() {
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["number"], 1);
-    assert_eq!(json["slug"], "my-ticket");
     assert!(!json["path"].as_str().unwrap_or("").is_empty());
 }
 
@@ -497,7 +494,7 @@ fn t_add_increments_ticket_number() {
 
     let ticket = repo
         .root
-        .join("notes/workstreams/test-branch/tickets/002-second.md");
+        .join("notes/workstreams/test-branch/tickets/002.md");
     assert!(ticket.exists());
 }
 
@@ -520,7 +517,7 @@ fn t_journal_appends_entry() {
 
     let ticket = repo
         .root
-        .join("notes/workstreams/test-branch/tickets/001-my-ticket.md");
+        .join("notes/workstreams/test-branch/tickets/001.md");
     let content = fs::read_to_string(ticket).unwrap();
     assert!(content.contains("## Journal"));
     assert!(content.contains("Started work"));
@@ -554,7 +551,7 @@ fn t_journal_with_heading() {
 
     let ticket = repo
         .root
-        .join("notes/workstreams/test-branch/tickets/001-my-ticket.md");
+        .join("notes/workstreams/test-branch/tickets/001.md");
     let content = fs::read_to_string(ticket).unwrap();
     assert!(content.contains("Day 1"));
     assert!(content.contains("Progress"));
@@ -611,7 +608,6 @@ fn t_search_json() {
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let arr = json.as_array().unwrap();
     assert!(!arr.is_empty());
-    assert_eq!(arr[0]["slug"], "fix-auth-bug");
 }
 
 #[test]
@@ -735,7 +731,7 @@ fn t_infers_workstream_from_worktree_branch() {
 
     assert!(
         repo.root
-            .join("notes/workstreams/test-branch/tickets/001-my-ticket.md")
+            .join("notes/workstreams/test-branch/tickets/001.md")
             .exists()
     );
 }
@@ -761,14 +757,14 @@ fn t_w_flag_overrides_inferred_branch() {
 
     assert!(
         repo.root
-            .join("notes/workstreams/target-branch/tickets/001-my-ticket.md")
+            .join("notes/workstreams/target-branch/tickets/001.md")
             .exists(),
         "ticket should land in target-branch, not other-branch"
     );
     assert!(
         !repo
             .root
-            .join("notes/workstreams/other-branch/tickets/001-my-ticket.md")
+            .join("notes/workstreams/other-branch/tickets/001.md")
             .exists(),
         "ticket should not land in other-branch"
     );

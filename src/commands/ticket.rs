@@ -57,24 +57,6 @@ fn resolve_workstream(matches: &ArgMatches, root: &Path) -> Result<(String, Path
     Ok((name, dir))
 }
 
-fn slugify(title: &str) -> String {
-    let mut slug = String::new();
-    let mut prev_hyphen = true;
-    for c in title.to_lowercase().chars() {
-        if c.is_alphanumeric() {
-            slug.push(c);
-            prev_hyphen = false;
-        } else if !prev_hyphen {
-            slug.push('-');
-            prev_hyphen = true;
-        }
-    }
-    if slug.ends_with('-') {
-        slug.pop();
-    }
-    slug
-}
-
 fn filter_tickets(tickets: Vec<Ticket>, filter: &str) -> Vec<Ticket> {
     match filter {
         "all" => tickets,
@@ -167,7 +149,6 @@ fn list(matches: &ArgMatches) -> Result<()> {
                 .map(|t| {
                     serde_json::json!({
                         "number": t.number,
-                        "slug": t.slug,
                         "title": t.title,
                         "status": t.status,
                     })
@@ -209,7 +190,6 @@ fn list(matches: &ArgMatches) -> Result<()> {
                         serde_json::json!({
                             "workstream": ws,
                             "number": t.number,
-                            "slug": t.slug,
                             "title": t.title,
                             "status": t.status,
                         })
@@ -282,8 +262,7 @@ fn add(matches: &ArgMatches) -> Result<()> {
 
     let existing = load_tickets(&ws_dir).unwrap_or_default();
     let number = existing.iter().map(|t| t.number).max().unwrap_or(0) + 1;
-    let slug = slugify(title);
-    let path = ticket_path(&ws_dir, number, &slug);
+    let path = ticket_path(&ws_dir, number);
 
     let escaped = title.replace('\\', r"\\").replace('"', r#"\""#);
     let mut content = format!("+++\nstatus = \"pending\"\ntitle = \"{escaped}\"\n+++\n");
@@ -294,16 +273,15 @@ fn add(matches: &ArgMatches) -> Result<()> {
     }
     std::fs::write(&path, &content).with_context(|| format!("writing {}", path.display()))?;
 
-    append_status_entry(&ws_dir, &format!("added {number:03}-{slug} ({title})"))?;
+    append_status_entry(&ws_dir, &format!("added {number:03} ({title})"))?;
 
     if json {
         return print_json(&serde_json::json!({
             "number": number,
-            "slug": slug,
             "path": path.to_string_lossy(),
         }));
     }
-    println!("Created {number:03}-{slug}");
+    println!("Created {number:03}");
     Ok(())
 }
 
@@ -319,7 +297,7 @@ fn done(matches: &ArgMatches) -> Result<()> {
     let tickets = load_tickets(&ws_dir)?;
     let ticket = resolve_ticket(&tickets, id)?;
 
-    let path = ticket_path(&ws_dir, ticket.number, &ticket.slug);
+    let path = ticket_path(&ws_dir, ticket.number);
     let content =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
 
@@ -334,10 +312,7 @@ fn done(matches: &ArgMatches) -> Result<()> {
     } else {
         "done"
     };
-    append_status_entry(
-        &ws_dir,
-        &format!("{action} {:03}-{}", ticket.number, ticket.slug),
-    )?;
+    append_status_entry(&ws_dir, &format!("{action} {:03}", ticket.number))?;
 
     if json {
         let status_str = if reopen {
@@ -352,7 +327,7 @@ fn done(matches: &ArgMatches) -> Result<()> {
             "status": status_str,
         }));
     }
-    println!("{action} {:03}-{}", ticket.number, ticket.slug);
+    println!("{action} {:03}", ticket.number);
     Ok(())
 }
 
@@ -415,7 +390,7 @@ fn journal(matches: &ArgMatches) -> Result<()> {
     let tickets = load_tickets(&ws_dir)?;
     let ticket = resolve_ticket(&tickets, id)?;
 
-    let path = ticket_path(&ws_dir, ticket.number, &ticket.slug);
+    let path = ticket_path(&ws_dir, ticket.number);
     let mut content =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
 
@@ -442,10 +417,7 @@ fn journal(matches: &ArgMatches) -> Result<()> {
             "appended_at": ts,
         }));
     }
-    println!(
-        "Journal entry added to {:03}-{}",
-        ticket.number, ticket.slug
-    );
+    println!("Journal entry added to {:03}", ticket.number);
     Ok(())
 }
 
@@ -457,7 +429,7 @@ fn edit(matches: &ArgMatches) -> Result<()> {
     let tickets = load_tickets(&ws_dir)?;
     let ticket = resolve_ticket(&tickets, id)?;
 
-    let path = ticket_path(&ws_dir, ticket.number, &ticket.slug);
+    let path = ticket_path(&ws_dir, ticket.number);
     let editor = std::env::var("EDITOR").context("$EDITOR is not set")?;
 
     let status = Command::new(&editor)
@@ -474,7 +446,6 @@ fn edit(matches: &ArgMatches) -> Result<()> {
 struct SearchTicket {
     workstream: String,
     number: u32,
-    slug: String,
     title: String,
     content: String,
 }
@@ -487,7 +458,6 @@ fn collect_search_tickets(matches: &ArgMatches, root: &Path) -> Result<Vec<Searc
             .map(|t| SearchTicket {
                 workstream: ws_name.clone(),
                 number: t.number,
-                slug: t.slug,
                 title: t.title,
                 content: t.content,
             })
@@ -512,7 +482,6 @@ fn collect_search_tickets(matches: &ArgMatches, root: &Path) -> Result<Vec<Searc
                 result.push(SearchTicket {
                     workstream: name.clone(),
                     number: t.number,
-                    slug: t.slug,
                     title: t.title,
                     content: t.content,
                 });
@@ -572,7 +541,7 @@ fn show_scored_results(results: &[(&SearchTicket, u32)], query: &str) {
     }
 }
 
-fn interactive_search(tickets: &[SearchTicket]) -> Result<Option<(String, u32, String, String)>> {
+fn interactive_search(tickets: &[SearchTicket]) -> Result<Option<(String, u32, String)>> {
     use crossterm::{
         cursor::{Hide, MoveTo},
         event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
@@ -639,14 +608,9 @@ fn interactive_search(tickets: &[SearchTicket]) -> Result<Option<(String, u32, S
                     return Ok(None);
                 }
                 KeyCode::Enter => {
-                    return Ok(results.get(selected).map(|(t, _)| {
-                        (
-                            t.workstream.clone(),
-                            t.number,
-                            t.slug.clone(),
-                            t.content.clone(),
-                        )
-                    }));
+                    return Ok(results
+                        .get(selected)
+                        .map(|(t, _)| (t.workstream.clone(), t.number, t.content.clone())));
                 }
                 KeyCode::Up => {
                     selected = selected.saturating_sub(1);
@@ -690,7 +654,6 @@ fn search(matches: &ArgMatches) -> Result<()> {
                     serde_json::json!({
                         "workstream": t.workstream,
                         "number": t.number,
-                        "slug": t.slug,
                         "title": t.title,
                         "score": score,
                     })
@@ -713,7 +676,6 @@ fn search(matches: &ArgMatches) -> Result<()> {
                     serde_json::json!({
                         "workstream": t.workstream,
                         "number": t.number,
-                        "slug": t.slug,
                         "title": t.title,
                         "score": score,
                     })
@@ -730,8 +692,8 @@ fn search(matches: &ArgMatches) -> Result<()> {
     }
 
     // TTY with no query: live interactive filter
-    if let Some((ws, num, slug, content)) = interactive_search(&tickets)? {
-        println!("{} {:03}-{}", ws, num, slug);
+    if let Some((ws, num, content)) = interactive_search(&tickets)? {
+        println!("{} {:03}", ws, num);
         render_ticket_content(&content);
     }
 
@@ -778,35 +740,10 @@ mod tests {
     fn make_ticket(number: u32, status: Status) -> Ticket {
         Ticket {
             number,
-            slug: format!("ticket-{number}"),
             title: format!("Ticket {number}"),
             status,
             content: String::new(),
         }
-    }
-
-    #[test]
-    fn slugify_basic() {
-        assert_eq!(slugify("Hello, World!"), "hello-world");
-        assert_eq!(slugify("My Ticket"), "my-ticket");
-    }
-
-    #[test]
-    fn slugify_leading_and_trailing_non_alnum() {
-        assert_eq!(slugify("  leading spaces"), "leading-spaces");
-        assert_eq!(slugify("trailing!!"), "trailing");
-    }
-
-    #[test]
-    fn slugify_consecutive_separators_collapse() {
-        assert_eq!(slugify("a---b"), "a-b");
-        assert_eq!(slugify("a  b"), "a-b");
-    }
-
-    #[test]
-    fn slugify_empty_and_all_punctuation() {
-        assert_eq!(slugify(""), "");
-        assert_eq!(slugify("!!!"), "");
     }
 
     #[test]
