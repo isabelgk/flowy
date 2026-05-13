@@ -15,7 +15,6 @@ use crate::output::print_json;
 
 pub fn dispatch(matches: &ArgMatches) -> Result<()> {
     match matches.subcommand() {
-        Some(("setup", sub)) => setup(sub),
         Some(("new", sub)) => new(sub),
         Some(("ls", sub)) => ls(sub),
         Some(("archive", sub)) => archive(sub),
@@ -32,7 +31,7 @@ fn get_repo_root(matches: &ArgMatches) -> Result<PathBuf> {
     }
 }
 
-fn setup(matches: &ArgMatches) -> Result<()> {
+pub fn clone(matches: &ArgMatches) -> Result<()> {
     let json = matches.get_flag("json");
     let url = matches.get_one::<String>("url").unwrap();
 

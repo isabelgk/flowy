@@ -19,9 +19,17 @@ pub fn build() -> Command {
                 .action(ArgAction::SetTrue)
                 .help("Output as JSON"),
         )
+        .subcommand(clone_cmd())
         .subcommand(worktree_cmd())
         .subcommand(ticket_cmd())
         .subcommand(tui_cmd())
+}
+
+fn clone_cmd() -> Command {
+    Command::new("clone")
+        .about("Clone a bare repo and scaffold the project structure")
+        .arg(Arg::new("url").required(true).index(1))
+        .arg(Arg::new("name").index(2))
 }
 
 fn worktree_cmd() -> Command {
@@ -29,13 +37,6 @@ fn worktree_cmd() -> Command {
         .visible_alias("wt")
         .about("Manage bare git worktrees")
         .arg_required_else_help(true)
-        .subcommand(
-            Command::new("setup")
-                .visible_alias("s")
-                .about("Clone a bare repo and scaffold the project structure")
-                .arg(Arg::new("url").required(true).index(1))
-                .arg(Arg::new("name").index(2)),
-        )
         .subcommand(
             Command::new("new")
                 .visible_alias("n")

@@ -6,6 +6,7 @@ use clap::ArgMatches;
 
 pub fn dispatch(matches: ArgMatches) -> Result<()> {
     match matches.subcommand() {
+        Some(("clone", sub)) => worktree::clone(sub),
         Some(("worktree", sub)) => worktree::dispatch(sub),
         Some(("ticket", sub)) => ticket::dispatch(sub),
         Some(("tui", _)) => {
