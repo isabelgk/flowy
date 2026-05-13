@@ -13,7 +13,7 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["cargo"] }
 clap_complete = "4"
 comfy-table = "7"
-crossterm = "0.27"
+crossterm = "0.29"
 nucleo-matcher = "0.3"
 owo-colors = "4"
 serde = { version = "1", features = ["derive"] }
