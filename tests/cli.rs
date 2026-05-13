@@ -1041,3 +1041,51 @@ fn wt_unarchive_rolls_back_notes_on_git_failure() {
         "notes must not remain in workstreams after failed unarchive"
     );
 }
+
+// Bug fix: `clone` must scaffold the default branch worktree and notes dir,
+// matching what `init` does for the initial main worktree.
+#[test]
+fn clone_scaffolds_default_branch_workstream() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+
+    let git_env = [
+        ("GIT_AUTHOR_NAME", "Test"),
+        ("GIT_AUTHOR_EMAIL", "test@example.com"),
+        ("GIT_COMMITTER_NAME", "Test"),
+        ("GIT_COMMITTER_EMAIL", "test@example.com"),
+    ];
+    std::process::Command::new("git")
+        .args(["init", "-b", "main", src.to_str().unwrap()])
+        .envs(git_env.iter().cloned())
+        .status()
+        .expect("git init");
+    std::process::Command::new("git")
+        .args(["commit", "--allow-empty", "-m", "init"])
+        .current_dir(&src)
+        .envs(git_env.iter().cloned())
+        .status()
+        .expect("git commit");
+
+    assert_cmd::Command::cargo_bin("flowy")
+        .unwrap()
+        .current_dir(tmp.path())
+        .args(["clone", src.to_str().unwrap(), "project"])
+        .envs(git_env.iter().cloned())
+        .assert()
+        .success();
+
+    let project = tmp.path().join("project");
+    assert!(project.join(".bare").is_dir(), ".bare should exist");
+    assert!(
+        project.join("worktrees").join("main").is_dir(),
+        "worktrees/main should exist after clone"
+    );
+    let ws_main = project.join("notes").join("workstreams").join("main");
+    assert!(
+        ws_main.is_dir(),
+        "notes/workstreams/main should exist after clone"
+    );
+    let meta = read_meta(&ws_main);
+    assert_eq!(meta.worktree.branch, "main");
+}
