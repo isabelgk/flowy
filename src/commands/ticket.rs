@@ -284,7 +284,7 @@ fn add(matches: &ArgMatches) -> Result<()> {
     let slug = slugify(title);
     let path = ticket_path(&ws_dir, number, &slug);
 
-    let mut content = format!("# {title}\n");
+    let mut content = format!("+++\nstatus = \"pending\"\n+++\n# {title}\n");
     if let Some(desc) = description {
         content.push('\n');
         content.push_str(desc);
@@ -322,7 +322,7 @@ fn done(matches: &ArgMatches) -> Result<()> {
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
 
     let new_content =
-        rewrite_h1_and_append(&content, reopen, wont_impl, summary.map(|s| s.as_str()));
+        rewrite_status_and_append(&content, reopen, wont_impl, summary.map(|s| s.as_str()));
     std::fs::write(&path, &new_content).with_context(|| format!("writing {}", path.display()))?;
 
     let action = if reopen {
@@ -354,46 +354,52 @@ fn done(matches: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-fn rewrite_h1_and_append(
+fn rewrite_status_and_append(
     content: &str,
     reopen: bool,
     wont_impl: bool,
     summary: Option<&str>,
 ) -> String {
-    let mut result = String::new();
-    let mut h1_done = false;
+    let new_status = if reopen {
+        "pending"
+    } else if wont_impl {
+        "wont-implement"
+    } else {
+        "complete"
+    };
 
-    for line in content.lines() {
-        if !h1_done && line.starts_with("# ") {
-            let raw = &line[2..];
-            // Strip any existing status prefix to get the bare title
-            let title = raw
-                .strip_prefix("completed: ")
-                .or_else(|| raw.strip_prefix("wont-implement: "))
-                .unwrap_or(raw);
-            let prefix = if reopen {
-                ""
-            } else if wont_impl {
-                "wont-implement: "
-            } else {
-                "completed: "
-            };
-            result.push_str(&format!("# {prefix}{title}\n"));
-            h1_done = true;
+    let result = if let Some(stripped) = content.strip_prefix("+++\n") {
+        if let Some(end) = stripped.find("\n+++\n") {
+            let fm = &stripped[..end];
+            let new_fm: String = fm
+                .lines()
+                .map(|l| {
+                    if l.starts_with("status =") {
+                        format!("status = \"{new_status}\"")
+                    } else {
+                        l.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let after = &stripped[end + 5..];
+            format!("+++\n{new_fm}\n+++\n{after}")
         } else {
-            result.push_str(line);
-            result.push('\n');
+            format!("+++\nstatus = \"{new_status}\"\n+++\n{content}")
         }
-    }
+    } else {
+        format!("+++\nstatus = \"{new_status}\"\n+++\n{content}")
+    };
 
     if let Some(s) = summary {
-        if !result.ends_with('\n') {
-            result.push('\n');
+        if result.ends_with('\n') {
+            format!("{result}\n## Summary\n\n{s}\n")
+        } else {
+            format!("{result}\n\n## Summary\n\n{s}\n")
         }
-        result.push_str(&format!("\n## Summary\n\n{s}\n"));
+    } else {
+        result
     }
-
-    result
 }
 
 fn journal(matches: &ArgMatches) -> Result<()> {
@@ -832,41 +838,46 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_h1_pending_to_complete() {
-        let out = rewrite_h1_and_append("# My Task\n", false, false, None);
-        assert_eq!(out, "# completed: My Task\n");
+    fn rewrite_status_pending_to_complete() {
+        let input = "+++\nstatus = \"pending\"\n+++\n# My Task\n";
+        let out = rewrite_status_and_append(input, false, false, None);
+        assert_eq!(out, "+++\nstatus = \"complete\"\n+++\n# My Task\n");
     }
 
     #[test]
-    fn rewrite_h1_complete_with_summary() {
-        let out = rewrite_h1_and_append("# My Task\n", false, false, Some("Done"));
-        assert!(out.starts_with("# completed: My Task\n"));
+    fn rewrite_status_complete_with_summary() {
+        let input = "+++\nstatus = \"pending\"\n+++\n# My Task\n";
+        let out = rewrite_status_and_append(input, false, false, Some("Done"));
+        assert!(out.starts_with("+++\nstatus = \"complete\"\n+++\n# My Task\n"));
         assert!(out.contains("\n## Summary\n\nDone\n"));
     }
 
     #[test]
-    fn rewrite_h1_pending_to_wont_implement() {
-        let out = rewrite_h1_and_append("# My Task\n", false, true, None);
-        assert_eq!(out, "# wont-implement: My Task\n");
+    fn rewrite_status_pending_to_wont_implement() {
+        let input = "+++\nstatus = \"pending\"\n+++\n# My Task\n";
+        let out = rewrite_status_and_append(input, false, true, None);
+        assert_eq!(out, "+++\nstatus = \"wont-implement\"\n+++\n# My Task\n");
     }
 
     #[test]
-    fn rewrite_h1_complete_to_reopen() {
-        let out = rewrite_h1_and_append("# completed: My Task\n", true, false, None);
-        assert_eq!(out, "# My Task\n");
+    fn rewrite_status_complete_to_reopen() {
+        let input = "+++\nstatus = \"complete\"\n+++\n# My Task\n";
+        let out = rewrite_status_and_append(input, true, false, None);
+        assert_eq!(out, "+++\nstatus = \"pending\"\n+++\n# My Task\n");
     }
 
     #[test]
-    fn rewrite_h1_wont_implement_to_reopen() {
-        let out = rewrite_h1_and_append("# wont-implement: My Task\n", true, false, None);
-        assert_eq!(out, "# My Task\n");
+    fn rewrite_status_wont_implement_to_reopen() {
+        let input = "+++\nstatus = \"wont-implement\"\n+++\n# My Task\n";
+        let out = rewrite_status_and_append(input, true, false, None);
+        assert_eq!(out, "+++\nstatus = \"pending\"\n+++\n# My Task\n");
     }
 
     #[test]
-    fn rewrite_h1_multiline_only_first_h1_changed() {
-        let input = "# My Task\n\nSome body text.\n\n## Section\n\nMore content.\n";
-        let out = rewrite_h1_and_append(input, false, false, None);
-        assert!(out.starts_with("# completed: My Task\n"));
+    fn rewrite_status_multiline_body_preserved() {
+        let input = "+++\nstatus = \"pending\"\n+++\n# My Task\n\nSome body text.\n\n## Section\n\nMore content.\n";
+        let out = rewrite_status_and_append(input, false, false, None);
+        assert!(out.starts_with("+++\nstatus = \"complete\"\n+++\n# My Task\n"));
         assert!(out.contains("Some body text."));
         assert!(out.contains("## Section"));
     }

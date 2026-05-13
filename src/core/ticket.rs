@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -19,6 +19,11 @@ pub struct Ticket {
     pub content: String,
 }
 
+#[derive(Deserialize)]
+struct Frontmatter {
+    status: Option<String>,
+}
+
 pub fn parse_ticket(path: &Path) -> Result<Ticket> {
     let filename = path
         .file_name()
@@ -34,29 +39,41 @@ pub fn parse_ticket(path: &Path) -> Result<Ticket> {
     })?;
     let slug = slug.to_string();
 
-    let content =
+    let raw =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
 
-    let heading = content
+    let (status, body) = if let Some(stripped) = raw.strip_prefix("+++\n") {
+        if let Some(end) = stripped.find("\n+++\n") {
+            let fm_str = &stripped[..end];
+            let fm: Frontmatter = toml::from_str(fm_str)
+                .with_context(|| format!("parsing frontmatter of '{filename}'"))?;
+            let body = stripped[end + 5..].to_string();
+            let status = match fm.status.as_deref().unwrap_or("pending") {
+                "complete" => Status::Complete,
+                "wont-implement" => Status::WontImplement,
+                _ => Status::Pending,
+            };
+            (status, body)
+        } else {
+            (Status::Pending, raw.clone())
+        }
+    } else {
+        (Status::Pending, raw.clone())
+    };
+
+    let title = body
         .lines()
         .find(|l| l.starts_with("# "))
         .ok_or_else(|| anyhow::anyhow!("ticket '{filename}' has no h1 heading"))?
-        .trim_start_matches("# ");
-
-    let (status, title) = if let Some(t) = heading.strip_prefix("completed: ") {
-        (Status::Complete, t.to_string())
-    } else if let Some(t) = heading.strip_prefix("wont-implement: ") {
-        (Status::WontImplement, t.to_string())
-    } else {
-        (Status::Pending, heading.to_string())
-    };
+        .trim_start_matches("# ")
+        .to_string();
 
     Ok(Ticket {
         number,
         slug,
         title,
         status,
-        content,
+        content: body,
     })
 }
 
@@ -126,7 +143,11 @@ mod tests {
     #[test]
     fn parse_ticket_pending() {
         let dir = tempfile::tempdir().unwrap();
-        let path = write_ticket(dir.path(), "001-my-ticket.md", "# My ticket\n\nBody.\n");
+        let path = write_ticket(
+            dir.path(),
+            "001-my-ticket.md",
+            "+++\nstatus = \"pending\"\n+++\n# My ticket\n\nBody.\n",
+        );
         let t = parse_ticket(&path).unwrap();
         assert_eq!(t.number, 1);
         assert_eq!(t.slug, "my-ticket");
@@ -137,7 +158,11 @@ mod tests {
     #[test]
     fn parse_ticket_complete() {
         let dir = tempfile::tempdir().unwrap();
-        let path = write_ticket(dir.path(), "002-task.md", "# completed: Task\n");
+        let path = write_ticket(
+            dir.path(),
+            "002-task.md",
+            "+++\nstatus = \"complete\"\n+++\n# Task\n",
+        );
         let t = parse_ticket(&path).unwrap();
         assert_eq!(t.status, Status::Complete);
         assert_eq!(t.title, "Task");
@@ -146,7 +171,11 @@ mod tests {
     #[test]
     fn parse_ticket_wont_implement() {
         let dir = tempfile::tempdir().unwrap();
-        let path = write_ticket(dir.path(), "003-task.md", "# wont-implement: Task\n");
+        let path = write_ticket(
+            dir.path(),
+            "003-task.md",
+            "+++\nstatus = \"wont-implement\"\n+++\n# Task\n",
+        );
         let t = parse_ticket(&path).unwrap();
         assert_eq!(t.status, Status::WontImplement);
         assert_eq!(t.title, "Task");
@@ -155,7 +184,11 @@ mod tests {
     #[test]
     fn parse_ticket_no_h1_errors() {
         let dir = tempfile::tempdir().unwrap();
-        let path = write_ticket(dir.path(), "001-task.md", "No heading here.\n");
+        let path = write_ticket(
+            dir.path(),
+            "001-task.md",
+            "+++\nstatus = \"pending\"\n+++\nNo heading here.\n",
+        );
         let err = parse_ticket(&path).unwrap_err();
         assert!(err.to_string().contains("no h1"));
     }

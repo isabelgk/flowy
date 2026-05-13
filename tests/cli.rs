@@ -65,7 +65,8 @@ fn t_add_creates_ticket_with_h1() {
         .join("001-my-ticket.md");
     assert!(ticket.exists(), "ticket file should exist");
     let content = fs::read_to_string(&ticket).unwrap();
-    assert!(content.starts_with("# My ticket\n"));
+    assert!(content.starts_with("+++\n"));
+    assert!(content.contains("# My ticket\n"));
 }
 
 #[test]
@@ -94,8 +95,12 @@ fn t_done_rewrites_heading_and_appends_summary() {
         .join("001-my-ticket.md");
     let content = fs::read_to_string(&ticket).unwrap();
     assert!(
-        content.starts_with("# completed: My ticket\n"),
-        "heading should have completed: prefix"
+        content.contains("status = \"complete\""),
+        "frontmatter should have complete status"
+    );
+    assert!(
+        content.contains("# My ticket\n"),
+        "h1 should have ticket title"
     );
     assert!(
         content.contains("## Summary"),
@@ -308,7 +313,7 @@ fn t_show_displays_ticket_content() {
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("completed: My ticket"));
+    assert!(stdout.contains("My ticket"));
 }
 
 #[test]
@@ -371,7 +376,8 @@ fn t_done_wont_implement() {
         .root
         .join("notes/workstreams/test-branch/tickets/001-my-ticket.md");
     let content = fs::read_to_string(ticket).unwrap();
-    assert!(content.starts_with("# wont-implement: My ticket"));
+    assert!(content.contains("status = \"wont-implement\""));
+    assert!(content.contains("# My ticket\n"));
 }
 
 #[test]
@@ -399,7 +405,8 @@ fn t_done_reopen_complete_ticket() {
         .root
         .join("notes/workstreams/test-branch/tickets/001-my-ticket.md");
     let content = fs::read_to_string(ticket).unwrap();
-    assert!(content.starts_with("# My ticket\n"));
+    assert!(content.contains("status = \"pending\""));
+    assert!(content.contains("# My ticket\n"));
 }
 
 #[test]
@@ -450,7 +457,8 @@ fn t_add_with_description() {
         .root
         .join("notes/workstreams/test-branch/tickets/001-my-ticket.md");
     let content = fs::read_to_string(ticket).unwrap();
-    assert!(content.starts_with("# My ticket\n"));
+    assert!(content.starts_with("+++\n"));
+    assert!(content.contains("# My ticket\n"));
     assert!(content.contains("Some details"));
 }
 
