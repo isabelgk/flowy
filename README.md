@@ -12,7 +12,7 @@ project/
   notes/workstreams/<safe-name>/
     meta.toml                         # branch + worktree path
     tickets/
-      001-slug.md                     # TOML frontmatter encodes status
+      001.md                          # TOML frontmatter encodes status
   notes/workstreams/archive/<name>/   # archived workstreams
 ```
 
