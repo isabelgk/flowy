@@ -714,6 +714,75 @@ fn t_edit_opens_ticket_in_editor() {
 }
 
 #[test]
+fn t_infers_workstream_from_worktree_branch() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "test/branch"])
+        .assert()
+        .success();
+
+    // No -w flag; workstream should be inferred from the worktree's checked-out branch.
+    repo.cmd()
+        .args(["t", "add", "My ticket"])
+        .current_dir(repo.root.join("worktrees").join("test-branch"))
+        .assert()
+        .success();
+
+    assert!(
+        repo.root
+            .join("notes/workstreams/test-branch/tickets/001-my-ticket.md")
+            .exists()
+    );
+}
+
+#[test]
+fn t_w_flag_overrides_inferred_branch() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "target/branch"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["wt", "new", "-b", "other/branch"])
+        .assert()
+        .success();
+
+    // Run from other-branch worktree but write to a different workstream via -w.
+    repo.cmd()
+        .args(["t", "add", "-w", "target-branch", "My ticket"])
+        .current_dir(repo.root.join("worktrees").join("other-branch"))
+        .assert()
+        .success();
+
+    assert!(
+        repo.root
+            .join("notes/workstreams/target-branch/tickets/001-my-ticket.md")
+            .exists(),
+        "ticket should land in target-branch, not other-branch"
+    );
+    assert!(
+        !repo
+            .root
+            .join("notes/workstreams/other-branch/tickets/001-my-ticket.md")
+            .exists(),
+        "ticket should not land in other-branch"
+    );
+}
+
+#[test]
+fn t_no_branch_errors_with_helpful_message() {
+    let repo = TestRepo::new();
+    // Run from a directory outside any git repo; git branch --show-current returns empty.
+    let outside = tempfile::TempDir::new().unwrap();
+    repo.cmd()
+        .args(["t", "add", "My ticket"])
+        .current_dir(outside.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot infer workstream"));
+}
+
+#[test]
 fn wt_new_json() {
     let repo = TestRepo::new();
 
