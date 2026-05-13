@@ -16,9 +16,9 @@ project/
   notes/workstreams/archive/<name>/   # archived workstreams
 ```
 
-Ticket status lives in TOML frontmatter (`+++` delimiters): `status = "pending"`,
-`status = "complete"`, or `status = "wont-implement"`. Ticket IDs are
-zero-padded three-digit numbers (`001`, `002`, ...).
+Ticket metadata lives in TOML frontmatter (`+++` delimiters) with `title` and
+`status` fields. Status values: `"pending"`, `"complete"`, `"wont-implement"`.
+Ticket IDs are zero-padded three-digit numbers (`001`, `002`, ...).
 
 ## Shell completions
 

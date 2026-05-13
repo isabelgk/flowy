@@ -264,6 +264,7 @@ fn show(matches: &ArgMatches) -> Result<()> {
         return print_json(ticket);
     }
 
+    println!("{}", ticket.title.bold());
     render_ticket_content(&ticket.content);
     Ok(())
 }
@@ -284,7 +285,8 @@ fn add(matches: &ArgMatches) -> Result<()> {
     let slug = slugify(title);
     let path = ticket_path(&ws_dir, number, &slug);
 
-    let mut content = format!("+++\nstatus = \"pending\"\n+++\n# {title}\n");
+    let escaped = title.replace('\\', r"\\").replace('"', r#"\""#);
+    let mut content = format!("+++\nstatus = \"pending\"\ntitle = \"{escaped}\"\n+++\n");
     if let Some(desc) = description {
         content.push('\n');
         content.push_str(desc);
@@ -839,45 +841,51 @@ mod tests {
 
     #[test]
     fn rewrite_status_pending_to_complete() {
-        let input = "+++\nstatus = \"pending\"\n+++\n# My Task\n";
+        let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n";
         let out = rewrite_status_and_append(input, false, false, None);
-        assert_eq!(out, "+++\nstatus = \"complete\"\n+++\n# My Task\n");
+        assert_eq!(
+            out,
+            "+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n"
+        );
     }
 
     #[test]
     fn rewrite_status_complete_with_summary() {
-        let input = "+++\nstatus = \"pending\"\n+++\n# My Task\n";
+        let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n";
         let out = rewrite_status_and_append(input, false, false, Some("Done"));
-        assert!(out.starts_with("+++\nstatus = \"complete\"\n+++\n# My Task\n"));
+        assert!(out.starts_with("+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n"));
         assert!(out.contains("\n## Summary\n\nDone\n"));
     }
 
     #[test]
     fn rewrite_status_pending_to_wont_implement() {
-        let input = "+++\nstatus = \"pending\"\n+++\n# My Task\n";
+        let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n";
         let out = rewrite_status_and_append(input, false, true, None);
-        assert_eq!(out, "+++\nstatus = \"wont-implement\"\n+++\n# My Task\n");
+        assert_eq!(
+            out,
+            "+++\nstatus = \"wont-implement\"\ntitle = \"My Task\"\n+++\n"
+        );
     }
 
     #[test]
     fn rewrite_status_complete_to_reopen() {
-        let input = "+++\nstatus = \"complete\"\n+++\n# My Task\n";
+        let input = "+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n";
         let out = rewrite_status_and_append(input, true, false, None);
-        assert_eq!(out, "+++\nstatus = \"pending\"\n+++\n# My Task\n");
+        assert_eq!(out, "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n");
     }
 
     #[test]
     fn rewrite_status_wont_implement_to_reopen() {
-        let input = "+++\nstatus = \"wont-implement\"\n+++\n# My Task\n";
+        let input = "+++\nstatus = \"wont-implement\"\ntitle = \"My Task\"\n+++\n";
         let out = rewrite_status_and_append(input, true, false, None);
-        assert_eq!(out, "+++\nstatus = \"pending\"\n+++\n# My Task\n");
+        assert_eq!(out, "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n");
     }
 
     #[test]
     fn rewrite_status_multiline_body_preserved() {
-        let input = "+++\nstatus = \"pending\"\n+++\n# My Task\n\nSome body text.\n\n## Section\n\nMore content.\n";
+        let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n\nSome body text.\n\n## Section\n\nMore content.\n";
         let out = rewrite_status_and_append(input, false, false, None);
-        assert!(out.starts_with("+++\nstatus = \"complete\"\n+++\n# My Task\n"));
+        assert!(out.starts_with("+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n"));
         assert!(out.contains("Some body text."));
         assert!(out.contains("## Section"));
     }

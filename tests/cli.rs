@@ -66,7 +66,7 @@ fn t_add_creates_ticket_with_h1() {
     assert!(ticket.exists(), "ticket file should exist");
     let content = fs::read_to_string(&ticket).unwrap();
     assert!(content.starts_with("+++\n"));
-    assert!(content.contains("# My ticket\n"));
+    assert!(content.contains("title = \"My ticket\""));
 }
 
 #[test]
@@ -98,10 +98,7 @@ fn t_done_rewrites_heading_and_appends_summary() {
         content.contains("status = \"complete\""),
         "frontmatter should have complete status"
     );
-    assert!(
-        content.contains("# My ticket\n"),
-        "h1 should have ticket title"
-    );
+    assert!(content.contains("title = \"My ticket\""));
     assert!(
         content.contains("## Summary"),
         "summary section should exist"
@@ -377,7 +374,7 @@ fn t_done_wont_implement() {
         .join("notes/workstreams/test-branch/tickets/001-my-ticket.md");
     let content = fs::read_to_string(ticket).unwrap();
     assert!(content.contains("status = \"wont-implement\""));
-    assert!(content.contains("# My ticket\n"));
+    assert!(content.contains("title = \"My ticket\""));
 }
 
 #[test]
@@ -406,7 +403,7 @@ fn t_done_reopen_complete_ticket() {
         .join("notes/workstreams/test-branch/tickets/001-my-ticket.md");
     let content = fs::read_to_string(ticket).unwrap();
     assert!(content.contains("status = \"pending\""));
-    assert!(content.contains("# My ticket\n"));
+    assert!(content.contains("title = \"My ticket\""));
 }
 
 #[test]
@@ -458,7 +455,7 @@ fn t_add_with_description() {
         .join("notes/workstreams/test-branch/tickets/001-my-ticket.md");
     let content = fs::read_to_string(ticket).unwrap();
     assert!(content.starts_with("+++\n"));
-    assert!(content.contains("# My ticket\n"));
+    assert!(content.contains("title = \"My ticket\""));
     assert!(content.contains("Some details"));
 }
 

@@ -22,6 +22,7 @@ pub struct Ticket {
 #[derive(Deserialize)]
 struct Frontmatter {
     status: Option<String>,
+    title: Option<String>,
 }
 
 pub fn parse_ticket(path: &Path) -> Result<Ticket> {
@@ -42,7 +43,7 @@ pub fn parse_ticket(path: &Path) -> Result<Ticket> {
     let raw =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
 
-    let (status, body) = if let Some(stripped) = raw.strip_prefix("+++\n") {
+    let (status, title, body) = if let Some(stripped) = raw.strip_prefix("+++\n") {
         if let Some(end) = stripped.find("\n+++\n") {
             let fm_str = &stripped[..end];
             let fm: Frontmatter = toml::from_str(fm_str)
@@ -53,20 +54,16 @@ pub fn parse_ticket(path: &Path) -> Result<Ticket> {
                 "wont-implement" => Status::WontImplement,
                 _ => Status::Pending,
             };
-            (status, body)
+            let title = fm.title.ok_or_else(|| {
+                anyhow::anyhow!("ticket '{filename}' frontmatter missing 'title'")
+            })?;
+            (status, title, body)
         } else {
-            (Status::Pending, raw.clone())
+            bail!("ticket '{filename}' has malformed frontmatter (no closing +++)")
         }
     } else {
-        (Status::Pending, raw.clone())
+        bail!("ticket '{filename}' has no frontmatter")
     };
-
-    let title = body
-        .lines()
-        .find(|l| l.starts_with("# "))
-        .ok_or_else(|| anyhow::anyhow!("ticket '{filename}' has no h1 heading"))?
-        .trim_start_matches("# ")
-        .to_string();
 
     Ok(Ticket {
         number,
@@ -146,7 +143,7 @@ mod tests {
         let path = write_ticket(
             dir.path(),
             "001-my-ticket.md",
-            "+++\nstatus = \"pending\"\n+++\n# My ticket\n\nBody.\n",
+            "+++\nstatus = \"pending\"\ntitle = \"My ticket\"\n+++\n\nBody.\n",
         );
         let t = parse_ticket(&path).unwrap();
         assert_eq!(t.number, 1);
@@ -161,7 +158,7 @@ mod tests {
         let path = write_ticket(
             dir.path(),
             "002-task.md",
-            "+++\nstatus = \"complete\"\n+++\n# Task\n",
+            "+++\nstatus = \"complete\"\ntitle = \"Task\"\n+++\n",
         );
         let t = parse_ticket(&path).unwrap();
         assert_eq!(t.status, Status::Complete);
@@ -174,7 +171,7 @@ mod tests {
         let path = write_ticket(
             dir.path(),
             "003-task.md",
-            "+++\nstatus = \"wont-implement\"\n+++\n# Task\n",
+            "+++\nstatus = \"wont-implement\"\ntitle = \"Task\"\n+++\n",
         );
         let t = parse_ticket(&path).unwrap();
         assert_eq!(t.status, Status::WontImplement);
@@ -182,15 +179,23 @@ mod tests {
     }
 
     #[test]
-    fn parse_ticket_no_h1_errors() {
+    fn parse_ticket_no_title_errors() {
         let dir = tempfile::tempdir().unwrap();
         let path = write_ticket(
             dir.path(),
             "001-task.md",
-            "+++\nstatus = \"pending\"\n+++\nNo heading here.\n",
+            "+++\nstatus = \"pending\"\n+++\n",
         );
         let err = parse_ticket(&path).unwrap_err();
-        assert!(err.to_string().contains("no h1"));
+        assert!(err.to_string().contains("missing 'title'"));
+    }
+
+    #[test]
+    fn parse_ticket_no_frontmatter_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_ticket(dir.path(), "001-task.md", "No frontmatter here.\n");
+        let err = parse_ticket(&path).unwrap_err();
+        assert!(err.to_string().contains("no frontmatter"));
     }
 
     #[test]
