@@ -921,3 +921,34 @@ fn init_fails_if_directory_exists() {
         .failure()
         .stderr(predicate::str::contains("already exists"));
 }
+
+// Bug fix: titles with special characters (tabs, newlines) that the old manual
+// escaping silently corrupted now round-trip correctly through TOML frontmatter.
+#[test]
+fn t_add_title_with_special_chars_round_trips() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat"])
+        .assert()
+        .success();
+
+    // Tab is the character the old manual escaping silently corrupted.
+    let title = "first\tsecond";
+    repo.cmd()
+        .args(["t", "add", "-w", "feat", title])
+        .assert()
+        .success();
+
+    let output = repo
+        .cmd()
+        .args(["--json", "t", "show", "-w", "feat", "1"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        json["title"].as_str().unwrap(),
+        title,
+        "title should survive TOML round-trip unchanged"
+    );
+}
