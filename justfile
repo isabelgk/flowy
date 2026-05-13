@@ -10,3 +10,7 @@ fmt:
 lint:
     cargo clippy
 
+smoke:
+    cargo build
+    bash tests/smoke.sh
+
