@@ -23,6 +23,7 @@ pub fn build() -> Command {
         .subcommand(worktree_cmd())
         .subcommand(ticket_cmd())
         .subcommand(tui_cmd())
+        .subcommand(completions_cmd())
 }
 
 fn clone_cmd() -> Command {
@@ -158,4 +159,14 @@ fn ticket_cmd() -> Command {
 
 fn tui_cmd() -> Command {
     Command::new("tui").about("Launch the interactive terminal UI (phase 2)")
+}
+
+fn completions_cmd() -> Command {
+    Command::new("completions")
+        .about("Generate shell completions")
+        .arg(
+            Arg::new("shell")
+                .required(true)
+                .value_parser(clap::value_parser!(clap_complete::Shell)),
+        )
 }

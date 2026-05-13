@@ -11,6 +11,7 @@ path = "src/main.rs"
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["cargo"] }
+clap_complete = "4"
 comfy-table = "7"
 crossterm = "0.27"
 nucleo-matcher = "0.3"

@@ -20,3 +20,14 @@ project/
 Ticket status lives in the h1 heading: no prefix = pending, `completed: ` =
 done, `wont-implement: ` = skipped. Ticket IDs are zero-padded three-digit
 numbers (`001`, `002`, ...).
+
+## Shell completions
+
+Generate completions with `flowy completions <shell>`. Supported shells: `bash`,
+`zsh`, `fish`, `powershell`, `elvish`.
+
+```sh
+flowy completions zsh > "${fpath[1]}/_flowy"
+flowy completions bash > /etc/bash_completion.d/flowy
+flowy completions fish > ~/.config/fish/completions/flowy.fish
+```
