@@ -19,11 +19,18 @@ pub fn build() -> Command {
                 .action(ArgAction::SetTrue)
                 .help("Output as JSON"),
         )
+        .subcommand(init_cmd())
         .subcommand(clone_cmd())
         .subcommand(worktree_cmd())
         .subcommand(ticket_cmd())
         .subcommand(tui_cmd())
         .subcommand(completions_cmd())
+}
+
+fn init_cmd() -> Command {
+    Command::new("init")
+        .about("Scaffold a new bare-repo project")
+        .arg(Arg::new("name").required(true).index(1))
 }
 
 fn clone_cmd() -> Command {

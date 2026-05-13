@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -13,10 +13,15 @@ pub enum Status {
 #[derive(Debug, Clone, Serialize)]
 pub struct Ticket {
     pub number: u32,
-    pub slug: String,
     pub title: String,
     pub status: Status,
     pub content: String,
+}
+
+#[derive(Deserialize)]
+struct Frontmatter {
+    status: Option<String>,
+    title: Option<String>,
 }
 
 pub fn parse_ticket(path: &Path) -> Result<Ticket> {
@@ -26,37 +31,40 @@ pub fn parse_ticket(path: &Path) -> Result<Ticket> {
         .ok_or_else(|| anyhow::anyhow!("invalid ticket path: {}", path.display()))?;
 
     let stem = filename.strip_suffix(".md").unwrap_or(filename);
-    let (num_str, slug) = stem
-        .split_once('-')
-        .ok_or_else(|| anyhow::anyhow!("ticket filename '{filename}' missing number prefix"))?;
-    let number: u32 = num_str.parse().with_context(|| {
-        format!("ticket filename '{filename}' has non-numeric prefix '{num_str}'")
-    })?;
-    let slug = slug.to_string();
+    let number: u32 = stem
+        .parse()
+        .with_context(|| format!("ticket filename '{filename}' has non-numeric name '{stem}'"))?;
 
-    let content =
+    let raw =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
 
-    let heading = content
-        .lines()
-        .find(|l| l.starts_with("# "))
-        .ok_or_else(|| anyhow::anyhow!("ticket '{filename}' has no h1 heading"))?
-        .trim_start_matches("# ");
-
-    let (status, title) = if let Some(t) = heading.strip_prefix("completed: ") {
-        (Status::Complete, t.to_string())
-    } else if let Some(t) = heading.strip_prefix("wont-implement: ") {
-        (Status::WontImplement, t.to_string())
+    let (status, title, body) = if let Some(stripped) = raw.strip_prefix("+++\n") {
+        if let Some(end) = stripped.find("\n+++\n") {
+            let fm_str = &stripped[..end];
+            let fm: Frontmatter = toml::from_str(fm_str)
+                .with_context(|| format!("parsing frontmatter of '{filename}'"))?;
+            let body = stripped[end + 5..].to_string();
+            let status = match fm.status.as_deref().unwrap_or("pending") {
+                "complete" => Status::Complete,
+                "wont-implement" => Status::WontImplement,
+                _ => Status::Pending,
+            };
+            let title = fm.title.ok_or_else(|| {
+                anyhow::anyhow!("ticket '{filename}' frontmatter missing 'title'")
+            })?;
+            (status, title, body)
+        } else {
+            bail!("ticket '{filename}' has malformed frontmatter (no closing +++)")
+        }
     } else {
-        (Status::Pending, heading.to_string())
+        bail!("ticket '{filename}' has no frontmatter")
     };
 
     Ok(Ticket {
         number,
-        slug,
         title,
         status,
-        content,
+        content: body,
     })
 }
 
@@ -80,36 +88,20 @@ pub fn load_tickets(workstream_dir: &Path) -> Result<Vec<Ticket>> {
     Ok(tickets)
 }
 
-pub fn ticket_path(workstream_dir: &Path, number: u32, slug: &str) -> PathBuf {
+pub fn ticket_path(workstream_dir: &Path, number: u32) -> PathBuf {
     workstream_dir
         .join("tickets")
-        .join(format!("{number:03}-{slug}.md"))
+        .join(format!("{number:03}.md"))
 }
 
 pub fn resolve_ticket<'a>(tickets: &'a [Ticket], id: &str) -> Result<&'a Ticket> {
-    // Numeric lookup: "1", "01", "001" all resolve to number 1
-    if let Ok(n) = id.parse::<u32>() {
-        return tickets
-            .iter()
-            .find(|t| t.number == n)
-            .ok_or_else(|| anyhow::anyhow!("no ticket with number {n}"));
-    }
-
-    // Slug prefix match
-    let matches: Vec<&Ticket> = tickets.iter().filter(|t| t.slug.starts_with(id)).collect();
-    match matches.len() {
-        0 => bail!("no ticket matching {id:?}"),
-        1 => Ok(matches[0]),
-        _ => bail!(
-            "ambiguous id {id:?} matches {} tickets: {}",
-            matches.len(),
-            matches
-                .iter()
-                .map(|t| t.slug.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    }
+    let n: u32 = id
+        .parse()
+        .map_err(|_| anyhow::anyhow!("ticket ID must be numeric, got {id:?}"))?;
+    tickets
+        .iter()
+        .find(|t| t.number == n)
+        .ok_or_else(|| anyhow::anyhow!("no ticket with number {n}"))
 }
 
 #[cfg(test)]
@@ -126,10 +118,13 @@ mod tests {
     #[test]
     fn parse_ticket_pending() {
         let dir = tempfile::tempdir().unwrap();
-        let path = write_ticket(dir.path(), "001-my-ticket.md", "# My ticket\n\nBody.\n");
+        let path = write_ticket(
+            dir.path(),
+            "001.md",
+            "+++\nstatus = \"pending\"\ntitle = \"My ticket\"\n+++\n\nBody.\n",
+        );
         let t = parse_ticket(&path).unwrap();
         assert_eq!(t.number, 1);
-        assert_eq!(t.slug, "my-ticket");
         assert_eq!(t.title, "My ticket");
         assert_eq!(t.status, Status::Pending);
     }
@@ -137,7 +132,11 @@ mod tests {
     #[test]
     fn parse_ticket_complete() {
         let dir = tempfile::tempdir().unwrap();
-        let path = write_ticket(dir.path(), "002-task.md", "# completed: Task\n");
+        let path = write_ticket(
+            dir.path(),
+            "002.md",
+            "+++\nstatus = \"complete\"\ntitle = \"Task\"\n+++\n",
+        );
         let t = parse_ticket(&path).unwrap();
         assert_eq!(t.status, Status::Complete);
         assert_eq!(t.title, "Task");
@@ -146,41 +145,44 @@ mod tests {
     #[test]
     fn parse_ticket_wont_implement() {
         let dir = tempfile::tempdir().unwrap();
-        let path = write_ticket(dir.path(), "003-task.md", "# wont-implement: Task\n");
+        let path = write_ticket(
+            dir.path(),
+            "003.md",
+            "+++\nstatus = \"wont-implement\"\ntitle = \"Task\"\n+++\n",
+        );
         let t = parse_ticket(&path).unwrap();
         assert_eq!(t.status, Status::WontImplement);
         assert_eq!(t.title, "Task");
     }
 
     #[test]
-    fn parse_ticket_no_h1_errors() {
+    fn parse_ticket_no_title_errors() {
         let dir = tempfile::tempdir().unwrap();
-        let path = write_ticket(dir.path(), "001-task.md", "No heading here.\n");
+        let path = write_ticket(dir.path(), "001.md", "+++\nstatus = \"pending\"\n+++\n");
         let err = parse_ticket(&path).unwrap_err();
-        assert!(err.to_string().contains("no h1"));
+        assert!(err.to_string().contains("missing 'title'"));
     }
 
     #[test]
-    fn parse_ticket_no_separator_errors() {
+    fn parse_ticket_no_frontmatter_errors() {
         let dir = tempfile::tempdir().unwrap();
-        let path = write_ticket(dir.path(), "badname.md", "# Title\n");
+        let path = write_ticket(dir.path(), "001.md", "No frontmatter here.\n");
         let err = parse_ticket(&path).unwrap_err();
-        assert!(err.to_string().contains("missing number prefix"));
+        assert!(err.to_string().contains("no frontmatter"));
     }
 
     #[test]
-    fn parse_ticket_non_numeric_prefix_errors() {
+    fn parse_ticket_non_numeric_name_errors() {
         let dir = tempfile::tempdir().unwrap();
-        let path = write_ticket(dir.path(), "abc-slug.md", "# Title\n");
+        let path = write_ticket(dir.path(), "abc.md", "# Title\n");
         let err = parse_ticket(&path).unwrap_err();
-        assert!(err.to_string().contains("non-numeric prefix"));
+        assert!(err.to_string().contains("non-numeric name"));
     }
 
-    fn make_ticket(number: u32, slug: &str) -> Ticket {
+    fn make_ticket(number: u32) -> Ticket {
         Ticket {
             number,
-            slug: slug.to_string(),
-            title: slug.to_string(),
+            title: format!("Ticket {number}"),
             status: Status::Pending,
             content: String::new(),
         }
@@ -188,7 +190,7 @@ mod tests {
 
     #[test]
     fn resolve_ticket_by_number_variants() {
-        let tickets = vec![make_ticket(1, "my-task"), make_ticket(2, "other-task")];
+        let tickets = vec![make_ticket(1), make_ticket(2)];
         assert_eq!(resolve_ticket(&tickets, "1").unwrap().number, 1);
         assert_eq!(resolve_ticket(&tickets, "01").unwrap().number, 1);
         assert_eq!(resolve_ticket(&tickets, "001").unwrap().number, 1);
@@ -196,24 +198,15 @@ mod tests {
     }
 
     #[test]
-    fn resolve_ticket_by_slug_prefix() {
-        let tickets = vec![make_ticket(1, "my-task"), make_ticket(2, "other-task")];
-        assert_eq!(resolve_ticket(&tickets, "my").unwrap().number, 1);
-        assert_eq!(resolve_ticket(&tickets, "my-task").unwrap().number, 1);
-        assert_eq!(resolve_ticket(&tickets, "other").unwrap().number, 2);
-    }
-
-    #[test]
     fn resolve_ticket_not_found_errors() {
-        let tickets = vec![make_ticket(1, "my-task")];
-        assert!(resolve_ticket(&tickets, "zzz").is_err());
+        let tickets = vec![make_ticket(1)];
         assert!(resolve_ticket(&tickets, "99").is_err());
     }
 
     #[test]
-    fn resolve_ticket_ambiguous_errors() {
-        let tickets = vec![make_ticket(1, "my-task"), make_ticket(2, "my-other")];
-        let err = resolve_ticket(&tickets, "my").unwrap_err();
-        assert!(err.to_string().contains("ambiguous"));
+    fn resolve_ticket_non_numeric_errors() {
+        let tickets = vec![make_ticket(1)];
+        let err = resolve_ticket(&tickets, "abc").unwrap_err();
+        assert!(err.to_string().contains("must be numeric"));
     }
 }

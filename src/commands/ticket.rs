@@ -57,24 +57,6 @@ fn resolve_workstream(matches: &ArgMatches, root: &Path) -> Result<(String, Path
     Ok((name, dir))
 }
 
-fn slugify(title: &str) -> String {
-    let mut slug = String::new();
-    let mut prev_hyphen = true;
-    for c in title.to_lowercase().chars() {
-        if c.is_alphanumeric() {
-            slug.push(c);
-            prev_hyphen = false;
-        } else if !prev_hyphen {
-            slug.push('-');
-            prev_hyphen = true;
-        }
-    }
-    if slug.ends_with('-') {
-        slug.pop();
-    }
-    slug
-}
-
 fn filter_tickets(tickets: Vec<Ticket>, filter: &str) -> Vec<Ticket> {
     match filter {
         "all" => tickets,
@@ -167,7 +149,6 @@ fn list(matches: &ArgMatches) -> Result<()> {
                 .map(|t| {
                     serde_json::json!({
                         "number": t.number,
-                        "slug": t.slug,
                         "title": t.title,
                         "status": t.status,
                     })
@@ -209,7 +190,6 @@ fn list(matches: &ArgMatches) -> Result<()> {
                         serde_json::json!({
                             "workstream": ws,
                             "number": t.number,
-                            "slug": t.slug,
                             "title": t.title,
                             "status": t.status,
                         })
@@ -264,6 +244,7 @@ fn show(matches: &ArgMatches) -> Result<()> {
         return print_json(ticket);
     }
 
+    println!("{}", ticket.title.bold());
     render_ticket_content(&ticket.content);
     Ok(())
 }
@@ -281,10 +262,10 @@ fn add(matches: &ArgMatches) -> Result<()> {
 
     let existing = load_tickets(&ws_dir).unwrap_or_default();
     let number = existing.iter().map(|t| t.number).max().unwrap_or(0) + 1;
-    let slug = slugify(title);
-    let path = ticket_path(&ws_dir, number, &slug);
+    let path = ticket_path(&ws_dir, number);
 
-    let mut content = format!("# {title}\n");
+    let escaped = title.replace('\\', r"\\").replace('"', r#"\""#);
+    let mut content = format!("+++\nstatus = \"pending\"\ntitle = \"{escaped}\"\n+++\n");
     if let Some(desc) = description {
         content.push('\n');
         content.push_str(desc);
@@ -292,16 +273,15 @@ fn add(matches: &ArgMatches) -> Result<()> {
     }
     std::fs::write(&path, &content).with_context(|| format!("writing {}", path.display()))?;
 
-    append_status_entry(&ws_dir, &format!("added {number:03}-{slug} ({title})"))?;
+    append_status_entry(&ws_dir, &format!("added {number:03} ({title})"))?;
 
     if json {
         return print_json(&serde_json::json!({
             "number": number,
-            "slug": slug,
             "path": path.to_string_lossy(),
         }));
     }
-    println!("Created {number:03}-{slug}");
+    println!("Created {number:03}");
     Ok(())
 }
 
@@ -317,12 +297,12 @@ fn done(matches: &ArgMatches) -> Result<()> {
     let tickets = load_tickets(&ws_dir)?;
     let ticket = resolve_ticket(&tickets, id)?;
 
-    let path = ticket_path(&ws_dir, ticket.number, &ticket.slug);
+    let path = ticket_path(&ws_dir, ticket.number);
     let content =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
 
     let new_content =
-        rewrite_h1_and_append(&content, reopen, wont_impl, summary.map(|s| s.as_str()));
+        rewrite_status_and_append(&content, reopen, wont_impl, summary.map(|s| s.as_str()));
     std::fs::write(&path, &new_content).with_context(|| format!("writing {}", path.display()))?;
 
     let action = if reopen {
@@ -332,10 +312,7 @@ fn done(matches: &ArgMatches) -> Result<()> {
     } else {
         "done"
     };
-    append_status_entry(
-        &ws_dir,
-        &format!("{action} {:03}-{}", ticket.number, ticket.slug),
-    )?;
+    append_status_entry(&ws_dir, &format!("{action} {:03}", ticket.number))?;
 
     if json {
         let status_str = if reopen {
@@ -350,50 +327,56 @@ fn done(matches: &ArgMatches) -> Result<()> {
             "status": status_str,
         }));
     }
-    println!("{action} {:03}-{}", ticket.number, ticket.slug);
+    println!("{action} {:03}", ticket.number);
     Ok(())
 }
 
-fn rewrite_h1_and_append(
+fn rewrite_status_and_append(
     content: &str,
     reopen: bool,
     wont_impl: bool,
     summary: Option<&str>,
 ) -> String {
-    let mut result = String::new();
-    let mut h1_done = false;
+    let new_status = if reopen {
+        "pending"
+    } else if wont_impl {
+        "wont-implement"
+    } else {
+        "complete"
+    };
 
-    for line in content.lines() {
-        if !h1_done && line.starts_with("# ") {
-            let raw = &line[2..];
-            // Strip any existing status prefix to get the bare title
-            let title = raw
-                .strip_prefix("completed: ")
-                .or_else(|| raw.strip_prefix("wont-implement: "))
-                .unwrap_or(raw);
-            let prefix = if reopen {
-                ""
-            } else if wont_impl {
-                "wont-implement: "
-            } else {
-                "completed: "
-            };
-            result.push_str(&format!("# {prefix}{title}\n"));
-            h1_done = true;
+    let result = if let Some(stripped) = content.strip_prefix("+++\n") {
+        if let Some(end) = stripped.find("\n+++\n") {
+            let fm = &stripped[..end];
+            let new_fm: String = fm
+                .lines()
+                .map(|l| {
+                    if l.starts_with("status =") {
+                        format!("status = \"{new_status}\"")
+                    } else {
+                        l.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let after = &stripped[end + 5..];
+            format!("+++\n{new_fm}\n+++\n{after}")
         } else {
-            result.push_str(line);
-            result.push('\n');
+            format!("+++\nstatus = \"{new_status}\"\n+++\n{content}")
         }
-    }
+    } else {
+        format!("+++\nstatus = \"{new_status}\"\n+++\n{content}")
+    };
 
     if let Some(s) = summary {
-        if !result.ends_with('\n') {
-            result.push('\n');
+        if result.ends_with('\n') {
+            format!("{result}\n## Summary\n\n{s}\n")
+        } else {
+            format!("{result}\n\n## Summary\n\n{s}\n")
         }
-        result.push_str(&format!("\n## Summary\n\n{s}\n"));
+    } else {
+        result
     }
-
-    result
 }
 
 fn journal(matches: &ArgMatches) -> Result<()> {
@@ -407,7 +390,7 @@ fn journal(matches: &ArgMatches) -> Result<()> {
     let tickets = load_tickets(&ws_dir)?;
     let ticket = resolve_ticket(&tickets, id)?;
 
-    let path = ticket_path(&ws_dir, ticket.number, &ticket.slug);
+    let path = ticket_path(&ws_dir, ticket.number);
     let mut content =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
 
@@ -434,10 +417,7 @@ fn journal(matches: &ArgMatches) -> Result<()> {
             "appended_at": ts,
         }));
     }
-    println!(
-        "Journal entry added to {:03}-{}",
-        ticket.number, ticket.slug
-    );
+    println!("Journal entry added to {:03}", ticket.number);
     Ok(())
 }
 
@@ -449,7 +429,7 @@ fn edit(matches: &ArgMatches) -> Result<()> {
     let tickets = load_tickets(&ws_dir)?;
     let ticket = resolve_ticket(&tickets, id)?;
 
-    let path = ticket_path(&ws_dir, ticket.number, &ticket.slug);
+    let path = ticket_path(&ws_dir, ticket.number);
     let editor = std::env::var("EDITOR").context("$EDITOR is not set")?;
 
     let status = Command::new(&editor)
@@ -466,7 +446,6 @@ fn edit(matches: &ArgMatches) -> Result<()> {
 struct SearchTicket {
     workstream: String,
     number: u32,
-    slug: String,
     title: String,
     content: String,
 }
@@ -479,7 +458,6 @@ fn collect_search_tickets(matches: &ArgMatches, root: &Path) -> Result<Vec<Searc
             .map(|t| SearchTicket {
                 workstream: ws_name.clone(),
                 number: t.number,
-                slug: t.slug,
                 title: t.title,
                 content: t.content,
             })
@@ -504,7 +482,6 @@ fn collect_search_tickets(matches: &ArgMatches, root: &Path) -> Result<Vec<Searc
                 result.push(SearchTicket {
                     workstream: name.clone(),
                     number: t.number,
-                    slug: t.slug,
                     title: t.title,
                     content: t.content,
                 });
@@ -564,7 +541,7 @@ fn show_scored_results(results: &[(&SearchTicket, u32)], query: &str) {
     }
 }
 
-fn interactive_search(tickets: &[SearchTicket]) -> Result<Option<(String, u32, String, String)>> {
+fn interactive_search(tickets: &[SearchTicket]) -> Result<Option<(String, u32, String)>> {
     use crossterm::{
         cursor::{Hide, MoveTo},
         event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
@@ -631,14 +608,9 @@ fn interactive_search(tickets: &[SearchTicket]) -> Result<Option<(String, u32, S
                     return Ok(None);
                 }
                 KeyCode::Enter => {
-                    return Ok(results.get(selected).map(|(t, _)| {
-                        (
-                            t.workstream.clone(),
-                            t.number,
-                            t.slug.clone(),
-                            t.content.clone(),
-                        )
-                    }));
+                    return Ok(results
+                        .get(selected)
+                        .map(|(t, _)| (t.workstream.clone(), t.number, t.content.clone())));
                 }
                 KeyCode::Up => {
                     selected = selected.saturating_sub(1);
@@ -682,7 +654,6 @@ fn search(matches: &ArgMatches) -> Result<()> {
                     serde_json::json!({
                         "workstream": t.workstream,
                         "number": t.number,
-                        "slug": t.slug,
                         "title": t.title,
                         "score": score,
                     })
@@ -705,7 +676,6 @@ fn search(matches: &ArgMatches) -> Result<()> {
                     serde_json::json!({
                         "workstream": t.workstream,
                         "number": t.number,
-                        "slug": t.slug,
                         "title": t.title,
                         "score": score,
                     })
@@ -722,8 +692,8 @@ fn search(matches: &ArgMatches) -> Result<()> {
     }
 
     // TTY with no query: live interactive filter
-    if let Some((ws, num, slug, content)) = interactive_search(&tickets)? {
-        println!("{} {:03}-{}", ws, num, slug);
+    if let Some((ws, num, content)) = interactive_search(&tickets)? {
+        println!("{} {:03}", ws, num);
         render_ticket_content(&content);
     }
 
@@ -770,35 +740,10 @@ mod tests {
     fn make_ticket(number: u32, status: Status) -> Ticket {
         Ticket {
             number,
-            slug: format!("ticket-{number}"),
             title: format!("Ticket {number}"),
             status,
             content: String::new(),
         }
-    }
-
-    #[test]
-    fn slugify_basic() {
-        assert_eq!(slugify("Hello, World!"), "hello-world");
-        assert_eq!(slugify("My Ticket"), "my-ticket");
-    }
-
-    #[test]
-    fn slugify_leading_and_trailing_non_alnum() {
-        assert_eq!(slugify("  leading spaces"), "leading-spaces");
-        assert_eq!(slugify("trailing!!"), "trailing");
-    }
-
-    #[test]
-    fn slugify_consecutive_separators_collapse() {
-        assert_eq!(slugify("a---b"), "a-b");
-        assert_eq!(slugify("a  b"), "a-b");
-    }
-
-    #[test]
-    fn slugify_empty_and_all_punctuation() {
-        assert_eq!(slugify(""), "");
-        assert_eq!(slugify("!!!"), "");
     }
 
     #[test]
@@ -832,41 +777,52 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_h1_pending_to_complete() {
-        let out = rewrite_h1_and_append("# My Task\n", false, false, None);
-        assert_eq!(out, "# completed: My Task\n");
+    fn rewrite_status_pending_to_complete() {
+        let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n";
+        let out = rewrite_status_and_append(input, false, false, None);
+        assert_eq!(
+            out,
+            "+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n"
+        );
     }
 
     #[test]
-    fn rewrite_h1_complete_with_summary() {
-        let out = rewrite_h1_and_append("# My Task\n", false, false, Some("Done"));
-        assert!(out.starts_with("# completed: My Task\n"));
+    fn rewrite_status_complete_with_summary() {
+        let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n";
+        let out = rewrite_status_and_append(input, false, false, Some("Done"));
+        assert!(out.starts_with("+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n"));
         assert!(out.contains("\n## Summary\n\nDone\n"));
     }
 
     #[test]
-    fn rewrite_h1_pending_to_wont_implement() {
-        let out = rewrite_h1_and_append("# My Task\n", false, true, None);
-        assert_eq!(out, "# wont-implement: My Task\n");
+    fn rewrite_status_pending_to_wont_implement() {
+        let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n";
+        let out = rewrite_status_and_append(input, false, true, None);
+        assert_eq!(
+            out,
+            "+++\nstatus = \"wont-implement\"\ntitle = \"My Task\"\n+++\n"
+        );
     }
 
     #[test]
-    fn rewrite_h1_complete_to_reopen() {
-        let out = rewrite_h1_and_append("# completed: My Task\n", true, false, None);
-        assert_eq!(out, "# My Task\n");
+    fn rewrite_status_complete_to_reopen() {
+        let input = "+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n";
+        let out = rewrite_status_and_append(input, true, false, None);
+        assert_eq!(out, "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n");
     }
 
     #[test]
-    fn rewrite_h1_wont_implement_to_reopen() {
-        let out = rewrite_h1_and_append("# wont-implement: My Task\n", true, false, None);
-        assert_eq!(out, "# My Task\n");
+    fn rewrite_status_wont_implement_to_reopen() {
+        let input = "+++\nstatus = \"wont-implement\"\ntitle = \"My Task\"\n+++\n";
+        let out = rewrite_status_and_append(input, true, false, None);
+        assert_eq!(out, "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n");
     }
 
     #[test]
-    fn rewrite_h1_multiline_only_first_h1_changed() {
-        let input = "# My Task\n\nSome body text.\n\n## Section\n\nMore content.\n";
-        let out = rewrite_h1_and_append(input, false, false, None);
-        assert!(out.starts_with("# completed: My Task\n"));
+    fn rewrite_status_multiline_body_preserved() {
+        let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n\nSome body text.\n\n## Section\n\nMore content.\n";
+        let out = rewrite_status_and_append(input, false, false, None);
+        assert!(out.starts_with("+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n"));
         assert!(out.contains("Some body text."));
         assert!(out.contains("## Section"));
     }

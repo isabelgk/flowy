@@ -62,10 +62,11 @@ fn t_add_creates_ticket_with_h1() {
         .join("workstreams")
         .join("test-branch")
         .join("tickets")
-        .join("001-my-ticket.md");
+        .join("001.md");
     assert!(ticket.exists(), "ticket file should exist");
     let content = fs::read_to_string(&ticket).unwrap();
-    assert!(content.starts_with("# My ticket\n"));
+    assert!(content.starts_with("+++\n"));
+    assert!(content.contains("title = \"My ticket\""));
 }
 
 #[test]
@@ -91,12 +92,13 @@ fn t_done_rewrites_heading_and_appends_summary() {
         .join("workstreams")
         .join("test-branch")
         .join("tickets")
-        .join("001-my-ticket.md");
+        .join("001.md");
     let content = fs::read_to_string(&ticket).unwrap();
     assert!(
-        content.starts_with("# completed: My ticket\n"),
-        "heading should have completed: prefix"
+        content.contains("status = \"complete\""),
+        "frontmatter should have complete status"
     );
+    assert!(content.contains("title = \"My ticket\""));
     assert!(
         content.contains("## Summary"),
         "summary section should exist"
@@ -139,7 +141,6 @@ fn t_list_json_correct_fields() {
     let arr = json.as_array().expect("JSON array");
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["number"], 1);
-    assert_eq!(arr[0]["slug"], "my-ticket");
     assert_eq!(arr[0]["status"], "complete");
 }
 
@@ -308,7 +309,7 @@ fn t_show_displays_ticket_content() {
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("completed: My ticket"));
+    assert!(stdout.contains("My ticket"));
 }
 
 #[test]
@@ -331,7 +332,6 @@ fn t_show_json() {
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["number"], 1);
-    assert_eq!(json["slug"], "my-ticket");
     assert_eq!(json["title"], "My ticket");
     assert_eq!(json["status"], "pending");
 }
@@ -369,9 +369,10 @@ fn t_done_wont_implement() {
 
     let ticket = repo
         .root
-        .join("notes/workstreams/test-branch/tickets/001-my-ticket.md");
+        .join("notes/workstreams/test-branch/tickets/001.md");
     let content = fs::read_to_string(ticket).unwrap();
-    assert!(content.starts_with("# wont-implement: My ticket"));
+    assert!(content.contains("status = \"wont-implement\""));
+    assert!(content.contains("title = \"My ticket\""));
 }
 
 #[test]
@@ -397,9 +398,10 @@ fn t_done_reopen_complete_ticket() {
 
     let ticket = repo
         .root
-        .join("notes/workstreams/test-branch/tickets/001-my-ticket.md");
+        .join("notes/workstreams/test-branch/tickets/001.md");
     let content = fs::read_to_string(ticket).unwrap();
-    assert!(content.starts_with("# My ticket\n"));
+    assert!(content.contains("status = \"pending\""));
+    assert!(content.contains("title = \"My ticket\""));
 }
 
 #[test]
@@ -448,9 +450,10 @@ fn t_add_with_description() {
 
     let ticket = repo
         .root
-        .join("notes/workstreams/test-branch/tickets/001-my-ticket.md");
+        .join("notes/workstreams/test-branch/tickets/001.md");
     let content = fs::read_to_string(ticket).unwrap();
-    assert!(content.starts_with("# My ticket\n"));
+    assert!(content.starts_with("+++\n"));
+    assert!(content.contains("title = \"My ticket\""));
     assert!(content.contains("Some details"));
 }
 
@@ -470,7 +473,6 @@ fn t_add_json() {
     assert!(output.status.success());
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["number"], 1);
-    assert_eq!(json["slug"], "my-ticket");
     assert!(!json["path"].as_str().unwrap_or("").is_empty());
 }
 
@@ -492,7 +494,7 @@ fn t_add_increments_ticket_number() {
 
     let ticket = repo
         .root
-        .join("notes/workstreams/test-branch/tickets/002-second.md");
+        .join("notes/workstreams/test-branch/tickets/002.md");
     assert!(ticket.exists());
 }
 
@@ -515,7 +517,7 @@ fn t_journal_appends_entry() {
 
     let ticket = repo
         .root
-        .join("notes/workstreams/test-branch/tickets/001-my-ticket.md");
+        .join("notes/workstreams/test-branch/tickets/001.md");
     let content = fs::read_to_string(ticket).unwrap();
     assert!(content.contains("## Journal"));
     assert!(content.contains("Started work"));
@@ -549,7 +551,7 @@ fn t_journal_with_heading() {
 
     let ticket = repo
         .root
-        .join("notes/workstreams/test-branch/tickets/001-my-ticket.md");
+        .join("notes/workstreams/test-branch/tickets/001.md");
     let content = fs::read_to_string(ticket).unwrap();
     assert!(content.contains("Day 1"));
     assert!(content.contains("Progress"));
@@ -606,7 +608,6 @@ fn t_search_json() {
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let arr = json.as_array().unwrap();
     assert!(!arr.is_empty());
-    assert_eq!(arr[0]["slug"], "fix-auth-bug");
 }
 
 #[test]
@@ -730,7 +731,7 @@ fn t_infers_workstream_from_worktree_branch() {
 
     assert!(
         repo.root
-            .join("notes/workstreams/test-branch/tickets/001-my-ticket.md")
+            .join("notes/workstreams/test-branch/tickets/001.md")
             .exists()
     );
 }
@@ -756,14 +757,14 @@ fn t_w_flag_overrides_inferred_branch() {
 
     assert!(
         repo.root
-            .join("notes/workstreams/target-branch/tickets/001-my-ticket.md")
+            .join("notes/workstreams/target-branch/tickets/001.md")
             .exists(),
         "ticket should land in target-branch, not other-branch"
     );
     assert!(
         !repo
             .root
-            .join("notes/workstreams/other-branch/tickets/001-my-ticket.md")
+            .join("notes/workstreams/other-branch/tickets/001.md")
             .exists(),
         "ticket should not land in other-branch"
     );
@@ -831,4 +832,92 @@ fn wt_unarchive_json() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"ok\": true"));
+}
+
+#[test]
+fn init_creates_project_structure() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join("myproject");
+
+    assert_cmd::Command::cargo_bin("flowy")
+        .unwrap()
+        .args(["init", project.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Initialized"));
+
+    assert!(project.join(".bare").is_dir(), ".bare should exist");
+    assert!(project.join(".git").is_file(), ".git pointer should exist");
+    assert!(
+        project.join("worktrees").join("main").is_dir(),
+        "worktrees/main should exist"
+    );
+    assert!(
+        project
+            .join("notes")
+            .join("workstreams")
+            .join("main")
+            .is_dir(),
+        "notes/workstreams/main should exist"
+    );
+    assert!(
+        project
+            .join("notes")
+            .join("workstreams")
+            .join("archive")
+            .is_dir(),
+        "notes/workstreams/archive should exist"
+    );
+
+    let meta = read_meta(&project.join("notes").join("workstreams").join("main"));
+    assert_eq!(meta.worktree.branch, "main");
+    assert!(!meta.created.is_empty());
+}
+
+#[test]
+fn init_json_output() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join("myproject");
+
+    assert_cmd::Command::cargo_bin("flowy")
+        .unwrap()
+        .args(["init", project.to_str().unwrap(), "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"ok\": true"));
+}
+
+#[test]
+fn init_with_relative_path_creates_worktree() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    assert_cmd::Command::cargo_bin("flowy")
+        .unwrap()
+        .current_dir(tmp.path())
+        .args(["init", "myproject"])
+        .assert()
+        .success();
+
+    assert!(
+        tmp.path()
+            .join("myproject")
+            .join("worktrees")
+            .join("main")
+            .is_dir(),
+        "worktrees/main should exist when init is called with a relative path"
+    );
+}
+
+#[test]
+fn init_fails_if_directory_exists() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join("existing");
+    fs::create_dir_all(&project).unwrap();
+
+    assert_cmd::Command::cargo_bin("flowy")
+        .unwrap()
+        .args(["init", project.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already exists"));
 }

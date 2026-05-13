@@ -7,6 +7,7 @@ use clap_complete::Shell;
 
 pub fn dispatch(matches: ArgMatches) -> Result<()> {
     match matches.subcommand() {
+        Some(("init", sub)) => worktree::init(sub),
         Some(("clone", sub)) => worktree::clone(sub),
         Some(("worktree", sub)) => worktree::dispatch(sub),
         Some(("ticket", sub)) => ticket::dispatch(sub),
