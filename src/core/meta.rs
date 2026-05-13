@@ -26,3 +26,32 @@ pub fn write_meta(dir: &Path, meta: &Meta) -> Result<()> {
     let content = toml::to_string(meta).context("serializing meta.toml")?;
     std::fs::write(&path, content).with_context(|| format!("writing {}", path.display()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn meta_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let meta = Meta {
+            created: "2024-01-01T00:00:00Z".to_string(),
+            worktree: WorktreeMeta {
+                path: "/worktrees/my-branch".to_string(),
+                branch: "feat/my-branch".to_string(),
+            },
+        };
+        write_meta(dir.path(), &meta).unwrap();
+        let loaded = read_meta(dir.path()).unwrap();
+        assert_eq!(loaded.created, meta.created);
+        assert_eq!(loaded.worktree.path, meta.worktree.path);
+        assert_eq!(loaded.worktree.branch, meta.worktree.branch);
+        assert!(dir.path().join("meta.toml").exists());
+    }
+
+    #[test]
+    fn read_meta_missing_file_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_meta(dir.path()).is_err());
+    }
+}
