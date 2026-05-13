@@ -153,7 +153,7 @@ fn ls(matches: &ArgMatches) -> Result<()> {
 
     let mut table = Table::new();
     table.set_content_arrangement(ContentArrangement::Dynamic);
-    table.set_header(["Branch", "", "Age", "Tickets"]);
+    table.set_header(["Branch", "", "Last commit", "Tickets"]);
 
     for wt in &worktrees {
         let branch_cell = if wt.dirty {
