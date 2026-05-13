@@ -425,16 +425,18 @@ fn archive(matches: &ArgMatches) -> Result<()> {
             .with_context(|| format!("moving {} to {}", ws_dir.display(), archive_dir.display()))?;
     }
 
-    let mut cmd = Command::new("git");
-    cmd.arg("worktree").arg("remove");
-    if needs_force {
-        cmd.arg("--force");
-    }
-    cmd.arg(&worktree_path).current_dir(root.join(".bare"));
+    if worktree_path.exists() {
+        let mut cmd = Command::new("git");
+        cmd.arg("worktree").arg("remove");
+        if needs_force {
+            cmd.arg("--force");
+        }
+        cmd.arg(&worktree_path).current_dir(root.join(".bare"));
 
-    let status = cmd.status().context("running git worktree remove")?;
-    if !status.success() {
-        bail!("git worktree remove failed");
+        let status = cmd.status().context("running git worktree remove")?;
+        if !status.success() {
+            bail!("git worktree remove failed");
+        }
     }
 
     if json {
