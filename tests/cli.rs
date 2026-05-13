@@ -993,3 +993,51 @@ fn t_done_summary_not_duplicated_on_second_call() {
         "exactly one ## Summary section should exist"
     );
 }
+
+// Bug fix: if `git worktree add` fails during unarchive the notes must be
+// rolled back to the archive directory, not left in the active workstreams dir.
+#[test]
+fn wt_unarchive_rolls_back_notes_on_git_failure() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["wt", "archive", "feat"])
+        .assert()
+        .success();
+
+    // Delete the branch from the bare repo so git worktree add will fail.
+    std::process::Command::new("git")
+        .args(["branch", "-D", "feat"])
+        .current_dir(repo.root.join(".bare"))
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .status()
+        .expect("git branch -D");
+
+    repo.cmd()
+        .args(["wt", "unarchive", "feat"])
+        .assert()
+        .failure();
+
+    // Notes must be rolled back to archive, not stranded in workstreams.
+    let archive_dir = repo
+        .root
+        .join("notes")
+        .join("workstreams")
+        .join("archive")
+        .join("feat");
+    assert!(
+        archive_dir.is_dir(),
+        "notes should be rolled back to archive after failed unarchive"
+    );
+    let ws_dir = repo.root.join("notes").join("workstreams").join("feat");
+    assert!(
+        !ws_dir.exists(),
+        "notes must not remain in workstreams after failed unarchive"
+    );
+}

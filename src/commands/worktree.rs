@@ -456,8 +456,19 @@ fn unarchive(matches: &ArgMatches) -> Result<()> {
 
     let branch = &meta.worktree.branch;
     let worktree_path = worktrees_dir(&root).join(name);
+    let ws_dir = crate::core::names::workstream_dir(&root, name);
 
-    // Branch already exists in the bare repo; no -b flag needed
+    // Move notes first so that if worktree add fails we can roll back and leave
+    // the workstream cleanly in the archive.
+    std::fs::rename(&archive_dir, &ws_dir).with_context(|| {
+        format!(
+            "restoring {} from {}",
+            ws_dir.display(),
+            archive_dir.display()
+        )
+    })?;
+
+    // Branch already exists in the bare repo; no -b flag needed.
     let status = Command::new("git")
         .arg("worktree")
         .arg("add")
@@ -467,17 +478,9 @@ fn unarchive(matches: &ArgMatches) -> Result<()> {
         .status()
         .context("running git worktree add")?;
     if !status.success() {
+        let _ = std::fs::rename(&ws_dir, &archive_dir);
         bail!("git worktree add failed");
     }
-
-    let ws_dir = crate::core::names::workstream_dir(&root, name);
-    std::fs::rename(&archive_dir, &ws_dir).with_context(|| {
-        format!(
-            "restoring {} from {}",
-            ws_dir.display(),
-            archive_dir.display()
-        )
-    })?;
 
     if json {
         return print_json(&serde_json::json!({"ok": true}));
