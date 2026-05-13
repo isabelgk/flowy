@@ -888,6 +888,27 @@ fn init_json_output() {
 }
 
 #[test]
+fn init_with_relative_path_creates_worktree() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    assert_cmd::Command::cargo_bin("flowy")
+        .unwrap()
+        .current_dir(tmp.path())
+        .args(["init", "myproject"])
+        .assert()
+        .success();
+
+    assert!(
+        tmp.path()
+            .join("myproject")
+            .join("worktrees")
+            .join("main")
+            .is_dir(),
+        "worktrees/main should exist when init is called with a relative path"
+    );
+}
+
+#[test]
 fn init_fails_if_directory_exists() {
     let tmp = tempfile::tempdir().unwrap();
     let project = tmp.path().join("existing");

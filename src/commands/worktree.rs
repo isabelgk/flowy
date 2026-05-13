@@ -40,6 +40,9 @@ pub fn init(matches: &ArgMatches) -> Result<()> {
         bail!("'{name}' already exists");
     }
     std::fs::create_dir_all(&root).with_context(|| format!("creating {name}"))?;
+    let root = root
+        .canonicalize()
+        .with_context(|| format!("resolving path for {name}"))?;
 
     let init_src = root.join(".init-src");
     let status = Command::new("git")
