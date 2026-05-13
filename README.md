@@ -1,8 +1,7 @@
 # flowy
 
 `flowy` is a Rust CLI for managing bare git repos + per-branch worktrees with
-markdown ticket files. It is currently in Phase 1 (core CLI); Phase 2 adds a
-`ratatui` TUI.
+markdown ticket files.
 
 The project manages this on-disk layout
 
