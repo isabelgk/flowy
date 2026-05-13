@@ -379,7 +379,11 @@ fn rewrite_status_and_append(
     };
 
     if let Some(s) = summary {
-        if result.ends_with('\n') {
+        let already_has_summary =
+            result.contains("\n## Summary\n") || result.starts_with("## Summary\n");
+        if already_has_summary {
+            result
+        } else if result.ends_with('\n') {
             format!("{result}\n## Summary\n\n{s}\n")
         } else {
             format!("{result}\n\n## Summary\n\n{s}\n")

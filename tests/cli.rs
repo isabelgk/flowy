@@ -952,3 +952,44 @@ fn t_add_title_with_special_chars_round_trips() {
         "title should survive TOML round-trip unchanged"
     );
 }
+
+// Bug fix: running `done --summary` twice must not append a second ## Summary.
+#[test]
+fn t_done_summary_not_duplicated_on_second_call() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["t", "add", "-w", "feat", "A ticket"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .args(["t", "done", "-w", "feat", "1", "--summary", "First"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["t", "done", "-w", "feat", "1", "--reopen"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["t", "done", "-w", "feat", "1", "--summary", "Second"])
+        .assert()
+        .success();
+
+    let ticket_path = repo
+        .root
+        .join("notes")
+        .join("workstreams")
+        .join("feat")
+        .join("tickets")
+        .join("001.md");
+    let content = fs::read_to_string(&ticket_path).unwrap();
+    assert_eq!(
+        content.matches("## Summary").count(),
+        1,
+        "exactly one ## Summary section should exist"
+    );
+}
