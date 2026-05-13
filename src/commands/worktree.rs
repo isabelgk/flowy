@@ -257,13 +257,30 @@ fn new(matches: &ArgMatches) -> Result<()> {
 }
 
 #[derive(Debug, serde::Serialize)]
-struct WorktreeInfo {
-    name: String,
-    branch: String,
-    dirty: bool,
-    age_seconds: i64,
-    tickets_pending: usize,
-    tickets_total: usize,
+pub struct WorktreeInfo {
+    pub name: String,
+    pub branch: String,
+    pub dirty: bool,
+    pub age_seconds: i64,
+    pub tickets_pending: usize,
+    pub tickets_total: usize,
+}
+
+pub fn list_worktrees(root: &Path) -> Result<Vec<WorktreeInfo>> {
+    let output = Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(root.join(".bare"))
+        .output()
+        .context("running git worktree list")?;
+    if !output.status.success() {
+        anyhow::bail!("git worktree list failed");
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(collect_worktree_info(&stdout, root))
+}
+
+pub fn format_age(age_seconds: i64) -> String {
+    format_age_inner(age_seconds)
 }
 
 fn ls(matches: &ArgMatches) -> Result<()> {
@@ -311,7 +328,7 @@ fn ls(matches: &ArgMatches) -> Result<()> {
         table.add_row([
             branch_cell,
             dirty_cell,
-            Cell::new(format_age(wt.age_seconds)),
+            Cell::new(format_age_inner(wt.age_seconds)),
             tickets_label,
         ]);
     }
@@ -407,7 +424,7 @@ fn branch_age(path: &Path) -> Result<i64> {
     Ok((chrono::Utc::now().timestamp() - ts).max(0))
 }
 
-fn format_age(age_seconds: i64) -> String {
+fn format_age_inner(age_seconds: i64) -> String {
     let age = age_seconds.max(0);
     let minutes = age / 60;
     let hours = minutes / 60;

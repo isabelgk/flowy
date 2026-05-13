@@ -1,9 +1,12 @@
 mod ticket;
-mod worktree;
+pub mod worktree;
 
 use anyhow::Result;
 use clap::ArgMatches;
 use clap_complete::Shell;
+use std::path::PathBuf;
+
+use crate::core::repo::find_repo_root;
 
 pub fn dispatch(matches: ArgMatches) -> Result<()> {
     match matches.subcommand() {
@@ -11,9 +14,13 @@ pub fn dispatch(matches: ArgMatches) -> Result<()> {
         Some(("clone", sub)) => worktree::clone(sub),
         Some(("worktree", sub)) => worktree::dispatch(sub),
         Some(("ticket", sub)) => ticket::dispatch(sub),
-        Some(("tui", _)) => {
-            eprintln!("TUI not yet implemented (phase 2)");
-            Ok(())
+        Some(("tui", _)) | None => {
+            let root = if let Some(p) = matches.get_one::<String>("repo-root") {
+                PathBuf::from(p)
+            } else {
+                find_repo_root()?
+            };
+            crate::tui::run(&root)
         }
         Some(("completions", sub)) => {
             let shell = sub.get_one::<Shell>("shell").copied().unwrap();

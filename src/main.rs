@@ -2,6 +2,7 @@ mod cli;
 mod commands;
 mod core;
 mod output;
+mod tui;
 
 fn main() {
     let matches = cli::build().get_matches();
