@@ -1089,3 +1089,48 @@ fn clone_scaffolds_default_branch_workstream() {
     let meta = read_meta(&ws_main);
     assert_eq!(meta.worktree.branch, "main");
 }
+
+#[test]
+fn clone_scaffolds_non_main_default_branch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+
+    let git_env = [
+        ("GIT_AUTHOR_NAME", "Test"),
+        ("GIT_AUTHOR_EMAIL", "test@example.com"),
+        ("GIT_COMMITTER_NAME", "Test"),
+        ("GIT_COMMITTER_EMAIL", "test@example.com"),
+    ];
+    std::process::Command::new("git")
+        .args(["init", "-b", "trunk", src.to_str().unwrap()])
+        .envs(git_env.iter().cloned())
+        .status()
+        .expect("git init");
+    std::process::Command::new("git")
+        .args(["commit", "--allow-empty", "-m", "init"])
+        .current_dir(&src)
+        .envs(git_env.iter().cloned())
+        .status()
+        .expect("git commit");
+
+    assert_cmd::Command::cargo_bin("flowy")
+        .unwrap()
+        .current_dir(tmp.path())
+        .args(["clone", src.to_str().unwrap(), "project"])
+        .envs(git_env.iter().cloned())
+        .assert()
+        .success();
+
+    let project = tmp.path().join("project");
+    assert!(
+        project.join("worktrees").join("trunk").is_dir(),
+        "worktrees/trunk should exist after clone"
+    );
+    let ws = project.join("notes").join("workstreams").join("trunk");
+    assert!(
+        ws.is_dir(),
+        "notes/workstreams/trunk should exist after clone"
+    );
+    let meta = read_meta(&ws);
+    assert_eq!(meta.worktree.branch, "trunk");
+}
