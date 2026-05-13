@@ -147,7 +147,18 @@ fn list(matches: &ArgMatches) -> Result<()> {
         let (ws_name, ws_dir) = resolve_workstream(matches, &root)?;
         let tickets = filter_tickets(load_tickets(&ws_dir)?, filter);
         if json {
-            return print_json(&tickets);
+            let val: Vec<serde_json::Value> = tickets
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "number": t.number,
+                        "slug": t.slug,
+                        "title": t.title,
+                        "status": t.status,
+                    })
+                })
+                .collect();
+            return print_json(&val);
         }
         print_ticket_table(&ws_name, &tickets);
     } else {
@@ -178,7 +189,17 @@ fn list(matches: &ArgMatches) -> Result<()> {
         if json {
             let val: Vec<serde_json::Value> = groups
                 .iter()
-                .map(|(name, tickets)| serde_json::json!({"workstream": name, "tickets": tickets}))
+                .flat_map(|(ws, tickets)| {
+                    tickets.iter().map(move |t| {
+                        serde_json::json!({
+                            "workstream": ws,
+                            "number": t.number,
+                            "slug": t.slug,
+                            "title": t.title,
+                            "status": t.status,
+                        })
+                    })
+                })
                 .collect();
             return print_json(&val);
         }
@@ -262,7 +283,6 @@ fn add(matches: &ArgMatches) -> Result<()> {
         return print_json(&serde_json::json!({
             "number": number,
             "slug": slug,
-            "title": title,
             "path": path.to_string_lossy(),
         }));
     }
@@ -303,10 +323,16 @@ fn done(matches: &ArgMatches) -> Result<()> {
     )?;
 
     if json {
+        let status_str = if reopen {
+            "pending"
+        } else if wont_impl {
+            "wont-implement"
+        } else {
+            "complete"
+        };
         return print_json(&serde_json::json!({
             "number": ticket.number,
-            "slug": ticket.slug,
-            "action": action,
+            "status": status_str,
         }));
     }
     println!("{action} {:03}-{}", ticket.number, ticket.slug);
@@ -357,6 +383,7 @@ fn rewrite_h1_and_append(
 
 fn journal(matches: &ArgMatches) -> Result<()> {
     let root = get_repo_root(matches)?;
+    let json = matches.get_flag("json");
     let id = matches.get_one::<String>("id").unwrap();
     let text = matches.get_one::<String>("text").unwrap();
     let heading = matches.get_one::<String>("heading");
@@ -386,6 +413,12 @@ fn journal(matches: &ArgMatches) -> Result<()> {
 
     std::fs::write(&path, &content).with_context(|| format!("writing {}", path.display()))?;
 
+    if json {
+        return print_json(&serde_json::json!({
+            "number": ticket.number,
+            "appended_at": ts,
+        }));
+    }
     println!(
         "Journal entry added to {:03}-{}",
         ticket.number, ticket.slug
@@ -632,12 +665,13 @@ fn search(matches: &ArgMatches) -> Result<()> {
         if json {
             let val: Vec<serde_json::Value> = results
                 .iter()
-                .map(|(t, _)| {
+                .map(|(t, score)| {
                     serde_json::json!({
                         "workstream": t.workstream,
                         "number": t.number,
                         "slug": t.slug,
                         "title": t.title,
+                        "score": score,
                     })
                 })
                 .collect();
@@ -654,12 +688,13 @@ fn search(matches: &ArgMatches) -> Result<()> {
         if json {
             let val: Vec<serde_json::Value> = results
                 .iter()
-                .map(|(t, _)| {
+                .map(|(t, score)| {
                     serde_json::json!({
                         "workstream": t.workstream,
                         "number": t.number,
                         "slug": t.slug,
                         "title": t.title,
+                        "score": score,
                     })
                 })
                 .collect();

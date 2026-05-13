@@ -33,6 +33,7 @@ fn get_repo_root(matches: &ArgMatches) -> Result<PathBuf> {
 }
 
 fn setup(matches: &ArgMatches) -> Result<()> {
+    let json = matches.get_flag("json");
     let url = matches.get_one::<String>("url").unwrap();
 
     let name = if let Some(n) = matches.get_one::<String>("name") {
@@ -68,12 +69,16 @@ fn setup(matches: &ArgMatches) -> Result<()> {
     std::fs::create_dir_all(root.join("notes").join("workstreams").join("archive"))
         .context("creating notes/workstreams/archive/")?;
 
+    if json {
+        return print_json(&serde_json::json!({"ok": true}));
+    }
     println!("Set up {name}");
     Ok(())
 }
 
 fn new(matches: &ArgMatches) -> Result<()> {
     let root = get_repo_root(matches)?;
+    let json = matches.get_flag("json");
     let branch = matches.get_one::<String>("branch").unwrap();
     let start_point = matches.get_one::<String>("start-point");
 
@@ -109,18 +114,21 @@ fn new(matches: &ArgMatches) -> Result<()> {
     };
     write_meta(&ws_dir, &meta)?;
 
+    if json {
+        return print_json(&serde_json::json!({"ok": true}));
+    }
     println!("Created worktree {name}");
     Ok(())
 }
 
 #[derive(Debug, serde::Serialize)]
 struct WorktreeInfo {
-    path: String,
+    name: String,
     branch: String,
     dirty: bool,
-    age: String,
-    pending: usize,
-    total: usize,
+    age_seconds: i64,
+    tickets_pending: usize,
+    tickets_total: usize,
 }
 
 fn ls(matches: &ArgMatches) -> Result<()> {
@@ -160,12 +168,17 @@ fn ls(matches: &ArgMatches) -> Result<()> {
         } else {
             Cell::new("")
         };
-        let tickets_label = if wt.pending > 0 {
-            Cell::new(format!("{}/{}", wt.pending, wt.total)).fg(Color::Green)
+        let tickets_label = if wt.tickets_pending > 0 {
+            Cell::new(format!("{}/{}", wt.tickets_pending, wt.tickets_total)).fg(Color::Green)
         } else {
-            Cell::new(format!("{}/{}", wt.pending, wt.total))
+            Cell::new(format!("{}/{}", wt.tickets_pending, wt.tickets_total))
         };
-        table.add_row([branch_cell, dirty_cell, Cell::new(&wt.age), tickets_label]);
+        table.add_row([
+            branch_cell,
+            dirty_cell,
+            Cell::new(format_age(wt.age_seconds)),
+            tickets_label,
+        ]);
     }
 
     println!("{table}");
@@ -206,24 +219,24 @@ fn collect_worktree_info(porcelain: &str, root: &Path) -> Vec<WorktreeInfo> {
 
         let branch = branch.unwrap_or_else(|| "(detached)".to_string());
         let dirty = is_dirty(&path).unwrap_or(false);
-        let age = branch_age(&path).unwrap_or_else(|_| "?".to_string());
+        let age_seconds = branch_age(&path).unwrap_or(0);
 
         let name = safe_name(&branch);
         let ws_dir = crate::core::names::workstream_dir(root, &name);
         let tickets = load_tickets(&ws_dir).unwrap_or_default();
-        let pending = tickets
+        let tickets_pending = tickets
             .iter()
             .filter(|t| t.status == Status::Pending)
             .count();
-        let total = tickets.len();
+        let tickets_total = tickets.len();
 
         result.push(WorktreeInfo {
-            path: path.to_string_lossy().into_owned(),
+            name,
             branch,
             dirty,
-            age,
-            pending,
-            total,
+            age_seconds,
+            tickets_pending,
+            tickets_total,
         });
     }
 
@@ -242,7 +255,7 @@ fn is_dirty(path: &Path) -> Result<bool> {
     Ok(!out.stdout.is_empty())
 }
 
-fn branch_age(path: &Path) -> Result<String> {
+fn branch_age(path: &Path) -> Result<i64> {
     let out = Command::new("git")
         .args(["log", "-1", "--format=%ct", "HEAD"])
         .current_dir(path)
@@ -252,15 +265,15 @@ fn branch_age(path: &Path) -> Result<String> {
     let ts_str = String::from_utf8_lossy(&out.stdout);
     let ts_str = ts_str.trim();
     if ts_str.is_empty() {
-        return Ok("no commits".to_string());
+        return Ok(0);
     }
 
     let ts: i64 = ts_str.parse().context("parsing commit timestamp")?;
-    Ok(format_age(ts))
+    Ok((chrono::Utc::now().timestamp() - ts).max(0))
 }
 
-fn format_age(commit_ts: i64) -> String {
-    let age = (chrono::Utc::now().timestamp() - commit_ts).max(0);
+fn format_age(age_seconds: i64) -> String {
+    let age = age_seconds.max(0);
     let minutes = age / 60;
     let hours = minutes / 60;
     let days = hours / 24;
@@ -287,6 +300,7 @@ fn format_age(commit_ts: i64) -> String {
 
 fn archive(matches: &ArgMatches) -> Result<()> {
     let root = get_repo_root(matches)?;
+    let json = matches.get_flag("json");
     let name = matches.get_one::<String>("name").unwrap();
     let force = matches.get_flag("force");
 
@@ -329,12 +343,16 @@ fn archive(matches: &ArgMatches) -> Result<()> {
         bail!("git worktree remove failed");
     }
 
+    if json {
+        return print_json(&serde_json::json!({"ok": true}));
+    }
     println!("Archived {name}");
     Ok(())
 }
 
 fn unarchive(matches: &ArgMatches) -> Result<()> {
     let root = get_repo_root(matches)?;
+    let json = matches.get_flag("json");
     let name = matches.get_one::<String>("name").unwrap();
 
     let archive_dir = notes_dir(&root).join("archive").join(name);
@@ -365,6 +383,9 @@ fn unarchive(matches: &ArgMatches) -> Result<()> {
         )
     })?;
 
+    if json {
+        return print_json(&serde_json::json!({"ok": true}));
+    }
     println!("Unarchived {name}");
     Ok(())
 }
