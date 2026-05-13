@@ -1,6 +1,8 @@
 use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
 use comfy_table::{Cell, Color, ContentArrangement, Table};
+use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
+use nucleo_matcher::{Config, Matcher, Utf32Str};
 use owo_colors::OwoColorize;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -193,21 +195,9 @@ fn list(matches: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-fn show(matches: &ArgMatches) -> Result<()> {
-    let root = get_repo_root(matches)?;
-    let json = matches.get_flag("json");
-    let id = matches.get_one::<String>("id").unwrap();
-
-    let (_, ws_dir) = resolve_workstream(matches, &root)?;
-    let tickets = load_tickets(&ws_dir)?;
-    let ticket = resolve_ticket(&tickets, id)?;
-
-    if json {
-        return print_json(ticket);
-    }
-
+fn render_ticket_content(content: &str) {
     let mut in_code = false;
-    for line in ticket.content.lines() {
+    for line in content.lines() {
         if line.starts_with("```") {
             in_code = !in_code;
             println!("{}", line.dimmed());
@@ -223,7 +213,22 @@ fn show(matches: &ArgMatches) -> Result<()> {
             println!("{line}");
         }
     }
+}
 
+fn show(matches: &ArgMatches) -> Result<()> {
+    let root = get_repo_root(matches)?;
+    let json = matches.get_flag("json");
+    let id = matches.get_one::<String>("id").unwrap();
+
+    let (_, ws_dir) = resolve_workstream(matches, &root)?;
+    let tickets = load_tickets(&ws_dir)?;
+    let ticket = resolve_ticket(&tickets, id)?;
+
+    if json {
+        return print_json(ticket);
+    }
+
+    render_ticket_content(&ticket.content);
     Ok(())
 }
 
@@ -410,8 +415,271 @@ fn edit(matches: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-fn search(_matches: &ArgMatches) -> Result<()> {
-    todo!("ticket search — implemented in ticket 005")
+struct SearchTicket {
+    workstream: String,
+    number: u32,
+    slug: String,
+    title: String,
+    content: String,
+}
+
+fn collect_search_tickets(matches: &ArgMatches, root: &Path) -> Result<Vec<SearchTicket>> {
+    if matches.get_one::<String>("workstream").is_some() {
+        let (ws_name, ws_dir) = resolve_workstream(matches, root)?;
+        return Ok(load_tickets(&ws_dir)?
+            .into_iter()
+            .map(|t| SearchTicket {
+                workstream: ws_name.clone(),
+                number: t.number,
+                slug: t.slug,
+                title: t.title,
+                content: t.content,
+            })
+            .collect());
+    }
+
+    let notes = notes_dir(root);
+    let mut result = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&notes) {
+        let mut dirs: Vec<PathBuf> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect();
+        dirs.sort();
+        for dir in dirs {
+            let name = match dir.file_name().and_then(|n| n.to_str()) {
+                Some(n) if n != "archive" => n.to_string(),
+                _ => continue,
+            };
+            for t in load_tickets(&dir).unwrap_or_default() {
+                result.push(SearchTicket {
+                    workstream: name.clone(),
+                    number: t.number,
+                    slug: t.slug,
+                    title: t.title,
+                    content: t.content,
+                });
+            }
+        }
+    }
+    Ok(result)
+}
+
+fn score_tickets<'a>(tickets: &'a [SearchTicket], query: &str) -> Vec<(&'a SearchTicket, u32)> {
+    let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
+    let mut matcher = Matcher::new(Config::DEFAULT);
+    let mut buf = Vec::new();
+    let mut results: Vec<(&SearchTicket, u32)> = Vec::new();
+
+    for t in tickets {
+        // Score against title + full content so body matches rank too
+        let haystack = format!("{}\n{}", t.title, t.content);
+        let hs = Utf32Str::new(&haystack, &mut buf);
+        if let Some(score) = pattern.score(hs, &mut matcher) {
+            results.push((t, score));
+        }
+    }
+
+    results.sort_by(|a, b| b.1.cmp(&a.1));
+    results
+}
+
+fn highlight_title(title: &str, indices: &[u32]) -> String {
+    let mut out = String::with_capacity(title.len() * 2);
+    for (i, c) in title.chars().enumerate() {
+        if indices.binary_search(&(i as u32)).is_ok() {
+            out.push_str(&format!("{}", c.yellow().bold()));
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn show_scored_results(results: &[(&SearchTicket, u32)], query: &str) {
+    let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
+    let mut matcher = Matcher::new(Config::DEFAULT);
+    let mut buf = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+
+    for (t, _) in results {
+        indices.clear();
+        // Compute highlight indices against title only
+        let title_hs = Utf32Str::new(&t.title, &mut buf);
+        pattern.indices(title_hs, &mut matcher, &mut indices);
+        indices.sort_unstable();
+        indices.dedup();
+
+        let highlighted = highlight_title(&t.title, &indices);
+        println!("{:03} {} {}", t.number, highlighted, t.workstream.dimmed());
+    }
+}
+
+fn interactive_search(tickets: &[SearchTicket]) -> Result<Option<(String, u32, String, String)>> {
+    use crossterm::{
+        cursor::{Hide, MoveTo},
+        event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+        execute,
+        terminal::{self, Clear, ClearType},
+    };
+    use std::io::{Write, stdout};
+
+    // Restores raw mode and cursor on drop (handles early returns via `?`)
+    struct TermGuard;
+    impl Drop for TermGuard {
+        fn drop(&mut self) {
+            let _ = crossterm::terminal::disable_raw_mode();
+            let _ = crossterm::execute!(
+                std::io::stdout(),
+                crossterm::cursor::Show,
+                crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
+                crossterm::cursor::MoveTo(0, 0)
+            );
+        }
+    }
+
+    let mut out = stdout();
+    terminal::enable_raw_mode()?;
+    let _guard = TermGuard;
+    execute!(out, Hide)?;
+
+    let mut query = String::new();
+    let mut selected: usize = 0;
+
+    loop {
+        let results: Vec<(&SearchTicket, u32)> = if query.is_empty() {
+            tickets.iter().map(|t| (t, 0)).collect()
+        } else {
+            score_tickets(tickets, &query)
+        };
+
+        if !results.is_empty() && selected >= results.len() {
+            selected = results.len() - 1;
+        }
+
+        let (_, rows) = terminal::size().unwrap_or((80, 24));
+        let max_show = (rows as usize).saturating_sub(2);
+
+        execute!(out, MoveTo(0, 0), Clear(ClearType::All))?;
+        write!(out, "Search: {}_\r\n", query)?;
+
+        for (i, (t, _)) in results.iter().take(max_show).enumerate() {
+            if i == selected {
+                write!(out, "> {:03} {} ({})\r\n", t.number, t.title, t.workstream)?;
+            } else {
+                write!(out, "  {:03} {} ({})\r\n", t.number, t.title, t.workstream)?;
+            }
+        }
+        out.flush()?;
+
+        if let Event::Key(key) = event::read()? {
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+            match key.code {
+                KeyCode::Esc => return Ok(None),
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    return Ok(None);
+                }
+                KeyCode::Enter => {
+                    return Ok(results.get(selected).map(|(t, _)| {
+                        (
+                            t.workstream.clone(),
+                            t.number,
+                            t.slug.clone(),
+                            t.content.clone(),
+                        )
+                    }));
+                }
+                KeyCode::Up => {
+                    if selected > 0 {
+                        selected -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if selected < results.len().saturating_sub(1) {
+                        selected += 1;
+                    }
+                }
+                KeyCode::Backspace => {
+                    query.pop();
+                    selected = 0;
+                }
+                KeyCode::Char(c) => {
+                    query.push(c);
+                    selected = 0;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn search(matches: &ArgMatches) -> Result<()> {
+    use std::io::IsTerminal;
+
+    let root = get_repo_root(matches)?;
+    let json = matches.get_flag("json");
+    let query = matches.get_one::<String>("query").map(String::as_str);
+    let is_tty = std::io::stdout().is_terminal();
+
+    let tickets = collect_search_tickets(matches, &root)?;
+
+    if !is_tty {
+        let q = query.ok_or_else(|| anyhow::anyhow!("query required in pipe mode"))?;
+        let results = score_tickets(&tickets, q);
+        if json {
+            let val: Vec<serde_json::Value> = results
+                .iter()
+                .map(|(t, _)| {
+                    serde_json::json!({
+                        "workstream": t.workstream,
+                        "number": t.number,
+                        "slug": t.slug,
+                        "title": t.title,
+                    })
+                })
+                .collect();
+            return print_json(&val);
+        }
+        for (t, _) in &results {
+            println!("{:03} {} ({})", t.number, t.title, t.workstream);
+        }
+        return Ok(());
+    }
+
+    if let Some(q) = query {
+        let results = score_tickets(&tickets, q);
+        if json {
+            let val: Vec<serde_json::Value> = results
+                .iter()
+                .map(|(t, _)| {
+                    serde_json::json!({
+                        "workstream": t.workstream,
+                        "number": t.number,
+                        "slug": t.slug,
+                        "title": t.title,
+                    })
+                })
+                .collect();
+            return print_json(&val);
+        }
+        if results.is_empty() {
+            println!("No matches.");
+        } else {
+            show_scored_results(&results, q);
+        }
+        return Ok(());
+    }
+
+    // TTY with no query: live interactive filter
+    if let Some((ws, num, slug, content)) = interactive_search(&tickets)? {
+        println!("{} {:03}-{}", ws, num, slug);
+        render_ticket_content(&content);
+    }
+
+    Ok(())
 }
 
 fn status(matches: &ArgMatches) -> Result<()> {
