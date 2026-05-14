@@ -9,18 +9,25 @@ use ratatui::{
 use crate::commands::worktree::format_age;
 use crate::core::ticket::Status;
 
-use super::{App, View};
+use super::{App, InputMode, View};
 
 pub fn render(f: &mut Frame, app: &App) {
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(f.area());
+
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-        .split(f.area());
+        .split(outer[0]);
 
     match app.view {
         View::Tickets => render_tickets(f, app, chunks[0], chunks[1]),
         View::Worktrees => render_worktrees(f, app, chunks[0], chunks[1]),
     }
+
+    render_help(f, app, outer[1]);
 }
 
 fn render_tickets(f: &mut Frame, app: &App, left: Rect, right: Rect) {
@@ -29,10 +36,21 @@ fn render_tickets(f: &mut Frame, app: &App, left: Rect, right: Rect) {
         .constraints([Constraint::Length(3), Constraint::Min(0)])
         .split(left);
 
+    let (search_border_style, search_text) = match app.input_mode {
+        InputMode::Search => (
+            Style::default().fg(Color::Yellow),
+            format!("> {}_", app.query),
+        ),
+        InputMode::Normal => (
+            Style::default().fg(Color::DarkGray),
+            format!("> {}", app.query),
+        ),
+    };
+
     let search_block = Block::default()
         .borders(Borders::ALL)
+        .border_style(search_border_style)
         .title(format!(" {} ", app.active_workstream));
-    let search_text = format!("> {}_", app.query);
     f.render_widget(
         Paragraph::new(search_text).block(search_block),
         left_chunks[0],
@@ -152,6 +170,47 @@ fn render_worktrees(f: &mut Frame, app: &App, left: Rect, right: Rect) {
     } else {
         f.render_widget(right_block, right);
     }
+}
+
+fn render_help(f: &mut Frame, app: &App, area: Rect) {
+    let key_style = Style::default().fg(Color::Yellow);
+
+    let spans: Vec<Span> = match (app.view, app.input_mode) {
+        (View::Tickets, InputMode::Normal) => vec![
+            Span::styled("j/k", key_style),
+            Span::raw(" navigate  "),
+            Span::styled("s", key_style),
+            Span::raw(" cycle status  "),
+            Span::styled("i", key_style),
+            Span::raw(" search  "),
+            Span::styled("enter", key_style),
+            Span::raw(" edit  "),
+            Span::styled("C-c", key_style),
+            Span::raw(" quit"),
+        ],
+        (View::Tickets, InputMode::Search) => vec![
+            Span::raw("type to filter  "),
+            Span::styled("esc", key_style),
+            Span::raw(" exit search  "),
+            Span::styled("↑/↓", key_style),
+            Span::raw(" navigate"),
+        ],
+        (View::Worktrees, _) => vec![
+            Span::styled("j/k", key_style),
+            Span::raw(" navigate  "),
+            Span::styled("enter", key_style),
+            Span::raw(" open  "),
+            Span::styled("tab", key_style),
+            Span::raw(" switch view  "),
+            Span::styled("C-c", key_style),
+            Span::raw(" quit"),
+        ],
+    };
+
+    f.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().fg(Color::DarkGray)),
+        area,
+    );
 }
 
 fn render_markdown(content: &str) -> Vec<Line<'_>> {

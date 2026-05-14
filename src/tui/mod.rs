@@ -25,6 +25,12 @@ pub enum View {
     Worktrees,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputMode {
+    Normal,
+    Search,
+}
+
 pub struct TuiTicket {
     pub number: u32,
     pub title: String,
@@ -36,6 +42,7 @@ pub struct TuiTicket {
 pub struct App {
     pub root: PathBuf,
     pub view: View,
+    pub input_mode: InputMode,
     pub active_workstream: String,
     pub tickets: Vec<TuiTicket>,
     pub worktrees: Vec<WorktreeInfo>,
@@ -90,6 +97,7 @@ impl App {
         self.ticket_selected = 0;
         self.query.clear();
         self.preview_scroll = 0;
+        self.input_mode = InputMode::Normal;
     }
 
     fn update_worktree_preview(&mut self) {
@@ -111,6 +119,10 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return None;
         }
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.should_quit = true;
+            return None;
+        }
         match self.view {
             View::Tickets => self.handle_tickets_key(key),
             View::Worktrees => self.handle_worktrees_key(key),
@@ -119,74 +131,103 @@ impl App {
 
     fn handle_tickets_key(&mut self, key: KeyEvent) -> Option<PathBuf> {
         let filtered = self.filtered_tickets();
-        match key.code {
-            KeyCode::Esc => {
-                if self.query.is_empty() {
-                    self.should_quit = true;
-                } else {
-                    self.query.clear();
-                    self.ticket_selected = 0;
+        match self.input_mode {
+            InputMode::Normal => match key.code {
+                KeyCode::Tab => {
+                    self.view = View::Worktrees;
+                    self.preview_scroll = 0;
+                    self.update_worktree_preview();
+                }
+                KeyCode::Down | KeyCode::Char('j')
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    if !filtered.is_empty() {
+                        self.ticket_selected = (self.ticket_selected + 1).min(filtered.len() - 1);
+                        self.preview_scroll = 0;
+                    }
+                }
+                KeyCode::Up | KeyCode::Char('k')
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    if self.ticket_selected > 0 {
+                        self.ticket_selected -= 1;
+                        self.preview_scroll = 0;
+                    }
+                }
+                KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.preview_scroll = self.preview_scroll.saturating_add(10);
+                }
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.preview_scroll = self.preview_scroll.saturating_sub(10);
+                }
+                KeyCode::Char('i') => {
+                    self.input_mode = InputMode::Search;
+                }
+                KeyCode::Char('s') => {
+                    if let Some(&idx) = filtered.get(self.ticket_selected) {
+                        let new_status = next_status(&self.tickets[idx].status);
+                        let path = self.tickets[idx].path.clone();
+                        if write_ticket_status(&path, &new_status).is_ok() {
+                            self.tickets[idx].status = new_status;
+                        }
+                    }
+                }
+                KeyCode::Enter => {
+                    if let Some(&idx) = filtered.get(self.ticket_selected) {
+                        return Some(self.tickets[idx].path.clone());
+                    }
+                }
+                _ => {}
+            },
+            InputMode::Search => match key.code {
+                KeyCode::Esc => {
+                    self.input_mode = InputMode::Normal;
+                }
+                KeyCode::Down => {
+                    if !filtered.is_empty() {
+                        self.ticket_selected = (self.ticket_selected + 1).min(filtered.len() - 1);
+                        self.preview_scroll = 0;
+                    }
+                }
+                KeyCode::Up => {
+                    if self.ticket_selected > 0 {
+                        self.ticket_selected -= 1;
+                        self.preview_scroll = 0;
+                    }
+                }
+                KeyCode::Backspace => {
+                    self.query.pop();
+                    let new_len = self.filtered_tickets().len();
+                    self.ticket_selected = self.ticket_selected.min(new_len.saturating_sub(1));
                     self.preview_scroll = 0;
                 }
-            }
-            KeyCode::Tab => {
-                self.view = View::Worktrees;
-                self.preview_scroll = 0;
-                self.update_worktree_preview();
-            }
-            KeyCode::Down => {
-                if !filtered.is_empty() {
-                    self.ticket_selected = (self.ticket_selected + 1).min(filtered.len() - 1);
+                KeyCode::Char(c)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    self.query.push(c);
+                    let new_len = self.filtered_tickets().len();
+                    self.ticket_selected = self.ticket_selected.min(new_len.saturating_sub(1));
                     self.preview_scroll = 0;
                 }
-            }
-            KeyCode::Up => {
-                if self.ticket_selected > 0 {
-                    self.ticket_selected -= 1;
-                    self.preview_scroll = 0;
-                }
-            }
-            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.preview_scroll = self.preview_scroll.saturating_add(10);
-            }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.preview_scroll = self.preview_scroll.saturating_sub(10);
-            }
-            KeyCode::Backspace => {
-                self.query.pop();
-                let new_len = self.filtered_tickets().len();
-                self.ticket_selected = self.ticket_selected.min(new_len.saturating_sub(1));
-                self.preview_scroll = 0;
-            }
-            KeyCode::Char(c)
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
-                    && !key.modifiers.contains(KeyModifiers::ALT) =>
-            {
-                self.query.push(c);
-                let new_len = self.filtered_tickets().len();
-                self.ticket_selected = self.ticket_selected.min(new_len.saturating_sub(1));
-                self.preview_scroll = 0;
-            }
-            KeyCode::Enter => {
-                if let Some(&idx) = filtered.get(self.ticket_selected) {
-                    return Some(self.tickets[idx].path.clone());
-                }
-            }
-            _ => {}
+                _ => {}
+            },
         }
         None
     }
 
     fn handle_worktrees_key(&mut self, key: KeyEvent) -> Option<PathBuf> {
         match key.code {
-            KeyCode::Esc => {
-                self.should_quit = true;
-            }
             KeyCode::Tab => {
                 self.view = View::Tickets;
                 self.preview_scroll = 0;
             }
-            KeyCode::Down => {
+            KeyCode::Down | KeyCode::Char('j')
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
                 if !self.worktrees.is_empty() {
                     self.worktree_selected =
                         (self.worktree_selected + 1).min(self.worktrees.len() - 1);
@@ -194,7 +235,10 @@ impl App {
                     self.update_worktree_preview();
                 }
             }
-            KeyCode::Up => {
+            KeyCode::Up | KeyCode::Char('k')
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
                 if self.worktree_selected > 0 {
                     self.worktree_selected -= 1;
                     self.preview_scroll = 0;
@@ -213,6 +257,48 @@ impl App {
         }
         None
     }
+}
+
+fn next_status(status: &Status) -> Status {
+    match status {
+        Status::Pending => Status::Complete,
+        Status::Complete => Status::WontImplement,
+        Status::WontImplement => Status::Pending,
+    }
+}
+
+fn write_ticket_status(path: &Path, new_status: &Status) -> Result<()> {
+    let raw = std::fs::read_to_string(path)?;
+    let stripped = raw
+        .strip_prefix("+++\n")
+        .ok_or_else(|| anyhow::anyhow!("missing frontmatter"))?;
+    let end = stripped
+        .find("\n+++\n")
+        .ok_or_else(|| anyhow::anyhow!("malformed frontmatter"))?;
+
+    let fm = &stripped[..end];
+    let body = &stripped[end + 5..];
+
+    let status_str = match new_status {
+        Status::Pending => "pending",
+        Status::Complete => "complete",
+        Status::WontImplement => "wont-implement",
+    };
+
+    let new_fm: String = fm
+        .lines()
+        .map(|line| {
+            if line.trim_start().starts_with("status") {
+                format!("status = \"{status_str}\"")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    std::fs::write(path, format!("+++\n{new_fm}\n+++\n{body}"))?;
+    Ok(())
 }
 
 pub fn run(root: &Path) -> Result<()> {
@@ -258,6 +344,7 @@ pub fn run(root: &Path) -> Result<()> {
     let mut app = App {
         root: root.to_path_buf(),
         view: initial_view,
+        input_mode: InputMode::Normal,
         active_workstream,
         tickets,
         worktrees,
