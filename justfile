@@ -10,6 +10,9 @@ fmt:
 lint:
     cargo clippy
 
+install:
+    cargo install --path .
+
 test:
     cargo test
 
