@@ -234,7 +234,7 @@ fn render_help(f: &mut Frame, app: &App, area: Rect) {
             Span::raw(" search  "),
             Span::styled("enter", key_style),
             Span::raw(" edit  "),
-            Span::styled("C-c", key_style),
+            Span::styled("q / C-c", key_style),
             Span::raw(" quit"),
         ],
         (View::Tickets, InputMode::Search) => vec![

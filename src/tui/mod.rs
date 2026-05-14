@@ -130,7 +130,9 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return None;
         }
-        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL)
+            || key.code == KeyCode::Char('q')
+        {
             self.should_quit = true;
             return None;
         }
