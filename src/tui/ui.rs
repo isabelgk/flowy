@@ -100,10 +100,18 @@ fn render_tickets(f: &mut Frame, app: &App, left: Rect, right: Rect) {
     let right_block = Block::default().borders(Borders::ALL);
     if let Some(&idx) = filtered.get(clamped) {
         let ticket = &app.tickets[idx];
+        let (glyph, status_label) = match ticket.status {
+            Status::Pending => ("·", "pending"),
+            Status::Complete => ("✓", "complete"),
+            Status::WontImplement => ("✗", "wont-implement"),
+        };
         let lines = render_markdown(ticket.content.as_str());
         f.render_widget(
             Paragraph::new(lines)
-                .block(right_block.title(format!(" {:03} ", ticket.number)))
+                .block(right_block.title(format!(
+                    " {:03}  {} {} ",
+                    ticket.number, glyph, status_label
+                )))
                 .wrap(Wrap { trim: false })
                 .scroll((app.preview_scroll, 0)),
             right,
