@@ -11,6 +11,30 @@ use crate::core::ticket::Status;
 
 use super::{App, InputMode, View};
 
+fn status_color(status: &Status) -> Color {
+    match status {
+        Status::Pending => Color::Cyan,
+        Status::Complete => Color::Green,
+        Status::WontImplement => Color::Red,
+    }
+}
+
+fn status_glyph(status: &Status) -> &'static str {
+    match status {
+        Status::Pending => "·",
+        Status::Complete => "✓",
+        Status::WontImplement => "✗",
+    }
+}
+
+fn status_label(status: &Status) -> &'static str {
+    match status {
+        Status::Pending => "pending",
+        Status::Complete => "complete",
+        Status::WontImplement => "wont-implement",
+    }
+}
+
 pub fn render(f: &mut Frame, app: &App) {
     let outer = Layout::default()
         .direction(Direction::Vertical)
@@ -50,7 +74,16 @@ fn render_tickets(f: &mut Frame, app: &App, left: Rect, right: Rect) {
     let search_block = Block::default()
         .borders(Borders::ALL)
         .border_style(search_border_style)
-        .title(format!(" {} ", app.active_workstream));
+        .title(Line::from(vec![
+            Span::raw(" "),
+            Span::styled(
+                app.active_workstream.as_str(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+        ]));
     f.render_widget(
         Paragraph::new(search_text).block(search_block),
         left_chunks[0],
@@ -65,18 +98,16 @@ fn render_tickets(f: &mut Frame, app: &App, left: Rect, right: Rect) {
                 Status::Pending => Style::default(),
                 Status::Complete | Status::WontImplement => Style::default().fg(Color::DarkGray),
             };
-            let glyph = match t.status {
-                Status::Pending => "·",
-                Status::Complete => "✓",
-                Status::WontImplement => "✗",
-            };
             ListItem::new(Line::from(vec![
                 Span::styled(
                     format!("{:03}", t.number),
                     Style::default().fg(Color::Yellow),
                 ),
                 Span::raw("  "),
-                Span::styled(glyph, title_style),
+                Span::styled(
+                    status_glyph(&t.status),
+                    Style::default().fg(status_color(&t.status)),
+                ),
                 Span::raw("  "),
                 Span::styled(t.title.as_str(), title_style),
             ]))
@@ -100,18 +131,18 @@ fn render_tickets(f: &mut Frame, app: &App, left: Rect, right: Rect) {
     let right_block = Block::default().borders(Borders::ALL);
     if let Some(&idx) = filtered.get(clamped) {
         let ticket = &app.tickets[idx];
-        let (glyph, status_label) = match ticket.status {
-            Status::Pending => ("·", "pending"),
-            Status::Complete => ("✓", "complete"),
-            Status::WontImplement => ("✗", "wont-implement"),
-        };
+        let color = status_color(&ticket.status);
+        let title = Line::from(vec![
+            Span::raw(format!(" {:03}  ", ticket.number)),
+            Span::styled(status_glyph(&ticket.status), Style::default().fg(color)),
+            Span::raw(" "),
+            Span::styled(status_label(&ticket.status), Style::default().fg(color)),
+            Span::raw(" "),
+        ]);
         let lines = render_markdown(ticket.content.as_str());
         f.render_widget(
             Paragraph::new(lines)
-                .block(right_block.title(format!(
-                    " {:03}  {} {} ",
-                    ticket.number, glyph, status_label
-                )))
+                .block(right_block.title(title))
                 .wrap(Wrap { trim: false })
                 .scroll((app.preview_scroll, 0)),
             right,
@@ -132,7 +163,9 @@ fn render_worktrees(f: &mut Frame, app: &App, left: Rect, right: Rect) {
             ListItem::new(Line::from(vec![
                 Span::styled(
                     wt.name.as_str(),
-                    Style::default().add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(dirty_marker, Style::default().fg(Color::Yellow)),
                 Span::raw("  "),
@@ -235,7 +268,9 @@ fn render_markdown(content: &str) -> Vec<Line<'_>> {
             if line.starts_with("### ") || line.starts_with("## ") || line.starts_with("# ") {
                 Line::from(Span::styled(
                     line,
-                    Style::default().add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
                 ))
             } else if line.starts_with("```") {
                 Line::from(Span::styled(line, Style::default().fg(Color::DarkGray)))
