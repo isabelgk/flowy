@@ -4,7 +4,7 @@ pub fn build() -> Command {
     Command::new("flowy")
         .version(clap::crate_version!())
         .about("Manage bare git worktrees and markdown tickets")
-        .arg_required_else_help(true)
+        .arg_required_else_help(false)
         .arg(
             Arg::new("repo-root")
                 .long("repo-root")
