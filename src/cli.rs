@@ -165,7 +165,7 @@ fn ticket_cmd() -> Command {
 }
 
 fn tui_cmd() -> Command {
-    Command::new("tui").about("Launch the interactive terminal UI (phase 2)")
+    Command::new("tui").about("Launch the interactive terminal UI")
 }
 
 fn completions_cmd() -> Command {
