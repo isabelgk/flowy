@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::core::{
+    cache::{Cache, load_cache, save_cache},
     meta::{Meta, WorktreeMeta, read_meta, write_meta},
     names::safe_name,
     repo::{find_repo_root, notes_dir, worktrees_dir},
@@ -267,6 +268,7 @@ pub struct WorktreeInfo {
 }
 
 pub fn list_worktrees(root: &Path) -> Result<Vec<WorktreeInfo>> {
+    let mut cache = load_cache(root);
     let output = Command::new("git")
         .args(["worktree", "list", "--porcelain"])
         .current_dir(root.join(".bare"))
@@ -276,7 +278,9 @@ pub fn list_worktrees(root: &Path) -> Result<Vec<WorktreeInfo>> {
         anyhow::bail!("git worktree list failed");
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(collect_worktree_info(&stdout, root))
+    let result = collect_worktree_info(&stdout, root, &mut cache);
+    save_cache(root, &cache);
+    Ok(result)
 }
 
 pub fn format_age(age_seconds: i64) -> String {
@@ -287,17 +291,7 @@ fn ls(matches: &ArgMatches) -> Result<()> {
     let root = get_repo_root(matches)?;
     let json = matches.get_flag("json");
 
-    let output = Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .current_dir(root.join(".bare"))
-        .output()
-        .context("running git worktree list")?;
-    if !output.status.success() {
-        bail!("git worktree list failed");
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let worktrees = collect_worktree_info(&stdout, &root);
+    let worktrees = list_worktrees(&root)?;
 
     if json {
         return print_json(&worktrees);
@@ -337,7 +331,8 @@ fn ls(matches: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-fn collect_worktree_info(porcelain: &str, root: &Path) -> Vec<WorktreeInfo> {
+fn collect_worktree_info(porcelain: &str, root: &Path, cache: &mut Cache) -> Vec<WorktreeInfo> {
+    let bare = root.join(".bare");
     let mut result = Vec::new();
 
     for block in porcelain.split("\n\n") {
@@ -371,16 +366,39 @@ fn collect_worktree_info(porcelain: &str, root: &Path) -> Vec<WorktreeInfo> {
 
         let branch = branch.unwrap_or_else(|| "(detached)".to_string());
         let dirty = is_dirty(&path).unwrap_or(false);
-        let age_seconds = branch_age(&path).unwrap_or(0);
 
         let name = safe_name(&branch);
         let ws_dir = crate::core::names::workstream_dir(root, &name);
-        let tickets = load_tickets(&ws_dir).unwrap_or_default();
-        let tickets_pending = tickets
-            .iter()
-            .filter(|t| t.status == Status::Pending)
-            .count();
-        let tickets_total = tickets.len();
+        let entry = cache.worktrees.entry(name.clone()).or_default();
+
+        // Use cached commit timestamp if HEAD hasn't moved; else re-fetch from git.
+        let commit_ts = match read_ref_sha(&bare, &branch) {
+            Some(sha) if sha == entry.head_sha => entry.commit_ts,
+            sha => {
+                let ts = commit_timestamp(&path).unwrap_or(0);
+                entry.head_sha = sha.unwrap_or_default();
+                entry.commit_ts = ts;
+                ts
+            }
+        };
+        let age_seconds = (chrono::Utc::now().timestamp() - commit_ts).max(0);
+
+        // Use cached ticket counts if the tickets directory mtime is unchanged.
+        let mtime = tickets_dir_mtime(&ws_dir);
+        let (tickets_pending, tickets_total) = if mtime != 0 && mtime == entry.tickets_dir_mtime {
+            (entry.tickets_pending, entry.tickets_total)
+        } else {
+            let tickets = load_tickets(&ws_dir).unwrap_or_default();
+            let pending = tickets
+                .iter()
+                .filter(|t| t.status == Status::Pending)
+                .count();
+            let total = tickets.len();
+            entry.tickets_dir_mtime = mtime;
+            entry.tickets_pending = pending;
+            entry.tickets_total = total;
+            (pending, total)
+        };
 
         result.push(WorktreeInfo {
             name,
@@ -395,6 +413,41 @@ fn collect_worktree_info(porcelain: &str, root: &Path) -> Vec<WorktreeInfo> {
     result
 }
 
+fn read_ref_sha(bare: &Path, branch: &str) -> Option<String> {
+    let out = Command::new("git")
+        .args(["rev-parse", &format!("refs/heads/{branch}")])
+        .current_dir(bare)
+        .output()
+        .ok()?;
+    if out.status.success() {
+        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    } else {
+        None
+    }
+}
+
+fn tickets_dir_mtime(ws_dir: &Path) -> u64 {
+    // Max mtime across ticket files — directory mtime only changes on add/remove,
+    // not on content edits (e.g. status changes written in-place).
+    let dir = ws_dir.join("tickets");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter_map(|e| {
+            e.metadata()
+                .ok()?
+                .modified()
+                .ok()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .map(|d| d.as_secs())
+        })
+        .max()
+        .unwrap_or(0)
+}
+
 fn is_dirty(path: &Path) -> Result<bool> {
     if !path.exists() {
         return Ok(false);
@@ -407,7 +460,7 @@ fn is_dirty(path: &Path) -> Result<bool> {
     Ok(!out.stdout.is_empty())
 }
 
-fn branch_age(path: &Path) -> Result<i64> {
+fn commit_timestamp(path: &Path) -> Result<i64> {
     let out = Command::new("git")
         .args(["log", "-1", "--format=%ct", "HEAD"])
         .current_dir(path)
@@ -420,8 +473,7 @@ fn branch_age(path: &Path) -> Result<i64> {
         return Ok(0);
     }
 
-    let ts: i64 = ts_str.parse().context("parsing commit timestamp")?;
-    Ok((chrono::Utc::now().timestamp() - ts).max(0))
+    ts_str.parse().context("parsing commit timestamp")
 }
 
 fn format_age_inner(age_seconds: i64) -> String {
@@ -496,6 +548,10 @@ fn archive(matches: &ArgMatches) -> Result<()> {
             bail!("git worktree remove failed");
         }
     }
+
+    let mut cache = load_cache(&root);
+    cache.worktrees.remove(name);
+    save_cache(&root, &cache);
 
     if json {
         return print_json(&serde_json::json!({"ok": true}));

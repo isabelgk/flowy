@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod meta;
 pub mod names;
 pub mod repo;

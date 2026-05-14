@@ -1,3 +1,5 @@
+alias i := install
+
 default:
     just --list
 
@@ -9,6 +11,9 @@ fmt:
 
 lint:
     cargo clippy
+
+install:
+    cargo install --path .
 
 test:
     cargo test

@@ -25,6 +25,12 @@ pub enum View {
     Worktrees,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputMode {
+    Normal,
+    Search,
+}
+
 pub struct TuiTicket {
     pub number: u32,
     pub title: String,
@@ -36,9 +42,11 @@ pub struct TuiTicket {
 pub struct App {
     pub root: PathBuf,
     pub view: View,
+    pub input_mode: InputMode,
     pub active_workstream: String,
     pub tickets: Vec<TuiTicket>,
-    pub worktrees: Vec<WorktreeInfo>,
+    // None = not yet fetched; Some = loaded (may be empty)
+    pub worktrees: Option<Vec<WorktreeInfo>>,
     pub worktree_preview: Vec<(u32, String)>,
     pub query: String,
     pub ticket_selected: usize,
@@ -48,6 +56,16 @@ pub struct App {
 }
 
 impl App {
+    pub fn worktree_list(&self) -> &[WorktreeInfo] {
+        self.worktrees.as_deref().unwrap_or(&[])
+    }
+
+    fn ensure_worktrees_loaded(&mut self) {
+        if self.worktrees.is_none() {
+            self.worktrees = Some(list_worktrees(&self.root).unwrap_or_default());
+        }
+    }
+
     pub fn filtered_tickets(&self) -> Vec<usize> {
         if self.query.is_empty() {
             return (0..self.tickets.len()).collect();
@@ -90,11 +108,12 @@ impl App {
         self.ticket_selected = 0;
         self.query.clear();
         self.preview_scroll = 0;
+        self.input_mode = InputMode::Normal;
     }
 
     fn update_worktree_preview(&mut self) {
         self.worktree_preview.clear();
-        if let Some(wt) = self.worktrees.get(self.worktree_selected) {
+        if let Some(wt) = self.worktree_list().get(self.worktree_selected) {
             let ws_dir = workstream_dir(&self.root, &wt.name);
             if let Ok(tickets) = load_tickets(&ws_dir) {
                 self.worktree_preview = tickets
@@ -111,6 +130,10 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return None;
         }
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.should_quit = true;
+            return None;
+        }
         match self.view {
             View::Tickets => self.handle_tickets_key(key),
             View::Worktrees => self.handle_worktrees_key(key),
@@ -119,82 +142,115 @@ impl App {
 
     fn handle_tickets_key(&mut self, key: KeyEvent) -> Option<PathBuf> {
         let filtered = self.filtered_tickets();
-        match key.code {
-            KeyCode::Esc => {
-                if self.query.is_empty() {
-                    self.should_quit = true;
-                } else {
-                    self.query.clear();
-                    self.ticket_selected = 0;
+        match self.input_mode {
+            InputMode::Normal => match key.code {
+                KeyCode::Tab => {
+                    self.view = View::Worktrees;
+                    self.preview_scroll = 0;
+                    self.ensure_worktrees_loaded();
+                    self.update_worktree_preview();
+                }
+                KeyCode::Down | KeyCode::Char('j')
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    if !filtered.is_empty() {
+                        self.ticket_selected = (self.ticket_selected + 1).min(filtered.len() - 1);
+                        self.preview_scroll = 0;
+                    }
+                }
+                KeyCode::Up | KeyCode::Char('k')
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    if self.ticket_selected > 0 {
+                        self.ticket_selected -= 1;
+                        self.preview_scroll = 0;
+                    }
+                }
+                KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.preview_scroll = self.preview_scroll.saturating_add(10);
+                }
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.preview_scroll = self.preview_scroll.saturating_sub(10);
+                }
+                KeyCode::Char('i') => {
+                    self.input_mode = InputMode::Search;
+                }
+                KeyCode::Char('s') => {
+                    if let Some(&idx) = filtered.get(self.ticket_selected) {
+                        let new_status = next_status(&self.tickets[idx].status);
+                        let path = self.tickets[idx].path.clone();
+                        if write_ticket_status(&path, &new_status).is_ok() {
+                            self.tickets[idx].status = new_status;
+                        }
+                    }
+                }
+                KeyCode::Enter => {
+                    if let Some(&idx) = filtered.get(self.ticket_selected) {
+                        return Some(self.tickets[idx].path.clone());
+                    }
+                }
+                _ => {}
+            },
+            InputMode::Search => match key.code {
+                KeyCode::Esc => {
+                    self.input_mode = InputMode::Normal;
+                }
+                KeyCode::Down => {
+                    if !filtered.is_empty() {
+                        self.ticket_selected = (self.ticket_selected + 1).min(filtered.len() - 1);
+                        self.preview_scroll = 0;
+                    }
+                }
+                KeyCode::Up => {
+                    if self.ticket_selected > 0 {
+                        self.ticket_selected -= 1;
+                        self.preview_scroll = 0;
+                    }
+                }
+                KeyCode::Backspace => {
+                    self.query.pop();
+                    let new_len = self.filtered_tickets().len();
+                    self.ticket_selected = self.ticket_selected.min(new_len.saturating_sub(1));
                     self.preview_scroll = 0;
                 }
-            }
-            KeyCode::Tab => {
-                self.view = View::Worktrees;
-                self.preview_scroll = 0;
-                self.update_worktree_preview();
-            }
-            KeyCode::Down => {
-                if !filtered.is_empty() {
-                    self.ticket_selected = (self.ticket_selected + 1).min(filtered.len() - 1);
+                KeyCode::Char(c)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    self.query.push(c);
+                    let new_len = self.filtered_tickets().len();
+                    self.ticket_selected = self.ticket_selected.min(new_len.saturating_sub(1));
                     self.preview_scroll = 0;
                 }
-            }
-            KeyCode::Up => {
-                if self.ticket_selected > 0 {
-                    self.ticket_selected -= 1;
-                    self.preview_scroll = 0;
-                }
-            }
-            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.preview_scroll = self.preview_scroll.saturating_add(10);
-            }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.preview_scroll = self.preview_scroll.saturating_sub(10);
-            }
-            KeyCode::Backspace => {
-                self.query.pop();
-                let new_len = self.filtered_tickets().len();
-                self.ticket_selected = self.ticket_selected.min(new_len.saturating_sub(1));
-                self.preview_scroll = 0;
-            }
-            KeyCode::Char(c)
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
-                    && !key.modifiers.contains(KeyModifiers::ALT) =>
-            {
-                self.query.push(c);
-                let new_len = self.filtered_tickets().len();
-                self.ticket_selected = self.ticket_selected.min(new_len.saturating_sub(1));
-                self.preview_scroll = 0;
-            }
-            KeyCode::Enter => {
-                if let Some(&idx) = filtered.get(self.ticket_selected) {
-                    return Some(self.tickets[idx].path.clone());
-                }
-            }
-            _ => {}
+                _ => {}
+            },
         }
         None
     }
 
     fn handle_worktrees_key(&mut self, key: KeyEvent) -> Option<PathBuf> {
         match key.code {
-            KeyCode::Esc => {
-                self.should_quit = true;
-            }
             KeyCode::Tab => {
                 self.view = View::Tickets;
                 self.preview_scroll = 0;
             }
-            KeyCode::Down => {
-                if !self.worktrees.is_empty() {
+            KeyCode::Down | KeyCode::Char('j')
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                if !self.worktree_list().is_empty() {
                     self.worktree_selected =
-                        (self.worktree_selected + 1).min(self.worktrees.len() - 1);
+                        (self.worktree_selected + 1).min(self.worktree_list().len() - 1);
                     self.preview_scroll = 0;
                     self.update_worktree_preview();
                 }
             }
-            KeyCode::Up => {
+            KeyCode::Up | KeyCode::Char('k')
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
                 if self.worktree_selected > 0 {
                     self.worktree_selected -= 1;
                     self.preview_scroll = 0;
@@ -202,7 +258,7 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                if let Some(wt) = self.worktrees.get(self.worktree_selected) {
+                if let Some(wt) = self.worktree_list().get(self.worktree_selected) {
                     let name = wt.name.clone();
                     self.load_tickets_for_workstream(&name);
                     self.view = View::Tickets;
@@ -213,6 +269,48 @@ impl App {
         }
         None
     }
+}
+
+fn next_status(status: &Status) -> Status {
+    match status {
+        Status::Pending => Status::Complete,
+        Status::Complete => Status::WontImplement,
+        Status::WontImplement => Status::Pending,
+    }
+}
+
+fn write_ticket_status(path: &Path, new_status: &Status) -> Result<()> {
+    let raw = std::fs::read_to_string(path)?;
+    let stripped = raw
+        .strip_prefix("+++\n")
+        .ok_or_else(|| anyhow::anyhow!("missing frontmatter"))?;
+    let end = stripped
+        .find("\n+++\n")
+        .ok_or_else(|| anyhow::anyhow!("malformed frontmatter"))?;
+
+    let fm = &stripped[..end];
+    let body = &stripped[end + 5..];
+
+    let status_str = match new_status {
+        Status::Pending => "pending",
+        Status::Complete => "complete",
+        Status::WontImplement => "wont-implement",
+    };
+
+    let new_fm: String = fm
+        .lines()
+        .map(|line| {
+            if line.trim_start().starts_with("status") {
+                format!("status = \"{status_str}\"")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    std::fs::write(path, format!("+++\n{new_fm}\n+++\n{body}"))?;
+    Ok(())
 }
 
 pub fn run(root: &Path) -> Result<()> {
@@ -253,14 +351,13 @@ pub fn run(root: &Path) -> Result<()> {
         Vec::new()
     };
 
-    let worktrees = list_worktrees(root).unwrap_or_default();
-
     let mut app = App {
         root: root.to_path_buf(),
         view: initial_view,
+        input_mode: InputMode::Normal,
         active_workstream,
         tickets,
-        worktrees,
+        worktrees: None,
         worktree_preview: Vec::new(),
         query: String::new(),
         ticket_selected: 0,
@@ -270,6 +367,7 @@ pub fn run(root: &Path) -> Result<()> {
     };
 
     if initial_view == View::Worktrees {
+        app.ensure_worktrees_loaded();
         app.update_worktree_preview();
     }
 
