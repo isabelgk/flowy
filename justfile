@@ -1,3 +1,5 @@
+alias i := install
+
 default:
     just --list
 
