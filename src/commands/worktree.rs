@@ -414,20 +414,37 @@ fn collect_worktree_info(porcelain: &str, root: &Path, cache: &mut Cache) -> Vec
 }
 
 fn read_ref_sha(bare: &Path, branch: &str) -> Option<String> {
-    let ref_path = bare.join("refs/heads").join(branch);
-    std::fs::read_to_string(ref_path)
-        .ok()
-        .map(|s| s.trim().to_string())
+    let out = Command::new("git")
+        .args(["rev-parse", &format!("refs/heads/{branch}")])
+        .current_dir(bare)
+        .output()
+        .ok()?;
+    if out.status.success() {
+        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    } else {
+        None
+    }
 }
 
 fn tickets_dir_mtime(ws_dir: &Path) -> u64 {
-    std::fs::metadata(ws_dir.join("tickets"))
-        .and_then(|m| m.modified())
-        .map(|t| {
-            t.duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
+    // Max mtime across ticket files — directory mtime only changes on add/remove,
+    // not on content edits (e.g. status changes written in-place).
+    let dir = ws_dir.join("tickets");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter_map(|e| {
+            e.metadata()
+                .ok()?
+                .modified()
+                .ok()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .map(|d| d.as_secs())
         })
+        .max()
         .unwrap_or(0)
 }
 
@@ -531,6 +548,10 @@ fn archive(matches: &ArgMatches) -> Result<()> {
             bail!("git worktree remove failed");
         }
     }
+
+    let mut cache = load_cache(&root);
+    cache.worktrees.remove(name);
+    save_cache(&root, &cache);
 
     if json {
         return print_json(&serde_json::json!({"ok": true}));

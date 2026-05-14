@@ -1,5 +1,6 @@
 /target
 .env
+.flowy/
 
 
 # Added by cargo
