@@ -65,11 +65,18 @@ fn render_tickets(f: &mut Frame, app: &App, left: Rect, right: Rect) {
                 Status::Pending => Style::default(),
                 Status::Complete | Status::WontImplement => Style::default().fg(Color::DarkGray),
             };
+            let glyph = match t.status {
+                Status::Pending => "·",
+                Status::Complete => "✓",
+                Status::WontImplement => "✗",
+            };
             ListItem::new(Line::from(vec![
                 Span::styled(
                     format!("{:03}", t.number),
                     Style::default().fg(Color::Yellow),
                 ),
+                Span::raw("  "),
+                Span::styled(glyph, title_style),
                 Span::raw("  "),
                 Span::styled(t.title.as_str(), title_style),
             ]))
