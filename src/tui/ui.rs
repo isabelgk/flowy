@@ -156,8 +156,8 @@ fn render_tickets(f: &mut Frame, app: &App, left: Rect, right: Rect) {
 }
 
 fn render_worktrees(f: &mut Frame, app: &App, left: Rect, right: Rect) {
-    let items: Vec<ListItem> = app
-        .worktrees
+    let worktrees = app.worktree_list();
+    let items: Vec<ListItem> = worktrees
         .iter()
         .map(|wt| {
             let dirty_marker = if wt.dirty { "*" } else { "" };
@@ -183,11 +183,9 @@ fn render_worktrees(f: &mut Frame, app: &App, left: Rect, right: Rect) {
         })
         .collect();
 
-    let clamped = app
-        .worktree_selected
-        .min(app.worktrees.len().saturating_sub(1));
+    let clamped = app.worktree_selected.min(worktrees.len().saturating_sub(1));
     let mut list_state = ListState::default();
-    if !app.worktrees.is_empty() {
+    if !worktrees.is_empty() {
         list_state.select(Some(clamped));
     }
 
@@ -200,7 +198,7 @@ fn render_worktrees(f: &mut Frame, app: &App, left: Rect, right: Rect) {
     );
 
     let right_block = Block::default().borders(Borders::ALL);
-    if let Some(wt) = app.worktrees.get(clamped) {
+    if let Some(wt) = worktrees.get(clamped) {
         let lines: Vec<Line> = app
             .worktree_preview
             .iter()

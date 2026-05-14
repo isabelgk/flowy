@@ -45,7 +45,8 @@ pub struct App {
     pub input_mode: InputMode,
     pub active_workstream: String,
     pub tickets: Vec<TuiTicket>,
-    pub worktrees: Vec<WorktreeInfo>,
+    // None = not yet fetched; Some = loaded (may be empty)
+    pub worktrees: Option<Vec<WorktreeInfo>>,
     pub worktree_preview: Vec<(u32, String)>,
     pub query: String,
     pub ticket_selected: usize,
@@ -55,6 +56,16 @@ pub struct App {
 }
 
 impl App {
+    pub fn worktree_list(&self) -> &[WorktreeInfo] {
+        self.worktrees.as_deref().unwrap_or(&[])
+    }
+
+    fn ensure_worktrees_loaded(&mut self) {
+        if self.worktrees.is_none() {
+            self.worktrees = Some(list_worktrees(&self.root).unwrap_or_default());
+        }
+    }
+
     pub fn filtered_tickets(&self) -> Vec<usize> {
         if self.query.is_empty() {
             return (0..self.tickets.len()).collect();
@@ -102,7 +113,7 @@ impl App {
 
     fn update_worktree_preview(&mut self) {
         self.worktree_preview.clear();
-        if let Some(wt) = self.worktrees.get(self.worktree_selected) {
+        if let Some(wt) = self.worktree_list().get(self.worktree_selected) {
             let ws_dir = workstream_dir(&self.root, &wt.name);
             if let Ok(tickets) = load_tickets(&ws_dir) {
                 self.worktree_preview = tickets
@@ -136,6 +147,7 @@ impl App {
                 KeyCode::Tab => {
                     self.view = View::Worktrees;
                     self.preview_scroll = 0;
+                    self.ensure_worktrees_loaded();
                     self.update_worktree_preview();
                 }
                 KeyCode::Down | KeyCode::Char('j')
@@ -228,9 +240,9 @@ impl App {
                 if !key.modifiers.contains(KeyModifiers::CONTROL)
                     && !key.modifiers.contains(KeyModifiers::ALT) =>
             {
-                if !self.worktrees.is_empty() {
+                if !self.worktree_list().is_empty() {
                     self.worktree_selected =
-                        (self.worktree_selected + 1).min(self.worktrees.len() - 1);
+                        (self.worktree_selected + 1).min(self.worktree_list().len() - 1);
                     self.preview_scroll = 0;
                     self.update_worktree_preview();
                 }
@@ -246,7 +258,7 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                if let Some(wt) = self.worktrees.get(self.worktree_selected) {
+                if let Some(wt) = self.worktree_list().get(self.worktree_selected) {
                     let name = wt.name.clone();
                     self.load_tickets_for_workstream(&name);
                     self.view = View::Tickets;
@@ -339,15 +351,13 @@ pub fn run(root: &Path) -> Result<()> {
         Vec::new()
     };
 
-    let worktrees = list_worktrees(root).unwrap_or_default();
-
     let mut app = App {
         root: root.to_path_buf(),
         view: initial_view,
         input_mode: InputMode::Normal,
         active_workstream,
         tickets,
-        worktrees,
+        worktrees: None,
         worktree_preview: Vec::new(),
         query: String::new(),
         ticket_selected: 0,
@@ -357,6 +367,7 @@ pub fn run(root: &Path) -> Result<()> {
     };
 
     if initial_view == View::Worktrees {
+        app.ensure_worktrees_loaded();
         app.update_worktree_preview();
     }
 
