@@ -221,14 +221,22 @@ fn new(matches: &ArgMatches) -> Result<()> {
     let name = safe_name(branch);
     let worktree_path = worktrees_dir(&root).join(&name);
 
+    let branch_exists = Command::new("git")
+        .args(["rev-parse", "--verify", &format!("refs/heads/{branch}")])
+        .current_dir(root.join(".bare"))
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
     let mut cmd = Command::new("git");
-    cmd.arg("worktree")
-        .arg("add")
-        .arg(&worktree_path)
-        .arg("-b")
-        .arg(branch);
-    if let Some(sp) = start_point {
-        cmd.arg(sp);
+    cmd.arg("worktree").arg("add").arg(&worktree_path);
+    if branch_exists {
+        cmd.arg(branch);
+    } else {
+        cmd.arg("-b").arg(branch);
+        if let Some(sp) = start_point {
+            cmd.arg(sp);
+        }
     }
     cmd.current_dir(root.join(".bare"));
 
