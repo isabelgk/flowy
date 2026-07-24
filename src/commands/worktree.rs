@@ -4,9 +4,10 @@ use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread;
 
 use crate::core::{
-    cache::{Cache, load_cache, save_cache},
+    cache::{Cache, WorktreeCache, load_cache, save_cache},
     meta::{Meta, WorktreeMeta, read_meta, write_meta},
     names::safe_name,
     repo::{find_repo_root, notes_dir, worktrees_dir},
@@ -339,9 +340,14 @@ fn ls(matches: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-fn collect_worktree_info(porcelain: &str, root: &Path, cache: &mut Cache) -> Vec<WorktreeInfo> {
-    let bare = root.join(".bare");
-    let mut result = Vec::new();
+struct WorktreeBlock {
+    path: PathBuf,
+    branch: String,
+    head_sha: Option<String>,
+}
+
+fn parse_worktree_blocks(porcelain: &str) -> Vec<WorktreeBlock> {
+    let mut blocks = Vec::new();
 
     for block in porcelain.split("\n\n") {
         let block = block.trim();
@@ -351,6 +357,7 @@ fn collect_worktree_info(porcelain: &str, root: &Path, cache: &mut Cache) -> Vec
 
         let mut path: Option<PathBuf> = None;
         let mut branch: Option<String> = None;
+        let mut head_sha: Option<String> = None;
         let mut is_bare = false;
 
         for line in block.lines() {
@@ -358,6 +365,8 @@ fn collect_worktree_info(porcelain: &str, root: &Path, cache: &mut Cache) -> Vec
                 path = Some(PathBuf::from(p));
             } else if let Some(b) = line.strip_prefix("branch ") {
                 branch = Some(b.strip_prefix("refs/heads/").unwrap_or(b).to_string());
+            } else if let Some(h) = line.strip_prefix("HEAD ") {
+                head_sha = Some(h.to_string());
             } else if line == "bare" {
                 is_bare = true;
             }
@@ -367,71 +376,100 @@ fn collect_worktree_info(porcelain: &str, root: &Path, cache: &mut Cache) -> Vec
             continue;
         }
 
-        let path = match path {
-            Some(p) => p,
-            None => continue,
-        };
-
+        let Some(path) = path else { continue };
         let branch = branch.unwrap_or_else(|| "(detached)".to_string());
-        let dirty = is_dirty(&path).unwrap_or(false);
-
-        let name = safe_name(&branch);
-        let ws_dir = crate::core::names::workstream_dir(root, &name);
-        let entry = cache.worktrees.entry(name.clone()).or_default();
-
-        // Use cached commit timestamp if HEAD hasn't moved; else re-fetch from git.
-        let commit_ts = match read_ref_sha(&bare, &branch) {
-            Some(sha) if sha == entry.head_sha => entry.commit_ts,
-            sha => {
-                let ts = commit_timestamp(&path).unwrap_or(0);
-                entry.head_sha = sha.unwrap_or_default();
-                entry.commit_ts = ts;
-                ts
-            }
-        };
-        let age_seconds = (chrono::Utc::now().timestamp() - commit_ts).max(0);
-
-        // Use cached ticket counts if the tickets directory mtime is unchanged.
-        let mtime = tickets_dir_mtime(&ws_dir);
-        let (tickets_pending, tickets_total) = if mtime != 0 && mtime == entry.tickets_dir_mtime {
-            (entry.tickets_pending, entry.tickets_total)
-        } else {
-            let tickets = load_tickets(&ws_dir).unwrap_or_default();
-            let pending = tickets
-                .iter()
-                .filter(|t| t.status == Status::Pending)
-                .count();
-            let total = tickets.len();
-            entry.tickets_dir_mtime = mtime;
-            entry.tickets_pending = pending;
-            entry.tickets_total = total;
-            (pending, total)
-        };
-
-        result.push(WorktreeInfo {
-            name,
+        blocks.push(WorktreeBlock {
+            path,
             branch,
-            dirty,
-            age_seconds,
-            tickets_pending,
-            tickets_total,
+            head_sha,
         });
     }
 
+    blocks
+}
+
+fn collect_worktree_info(porcelain: &str, root: &Path, cache: &mut Cache) -> Vec<WorktreeInfo> {
+    // Per-worktree status comes from separate `git` invocations (status, log);
+    // running them concurrently avoids paying process-spawn latency N times over.
+    let jobs: Vec<_> = parse_worktree_blocks(porcelain)
+        .into_iter()
+        .map(|b| {
+            let name = safe_name(&b.branch);
+            let ws_dir = crate::core::names::workstream_dir(root, &name);
+            let old_entry = cache.worktrees.get(&name).cloned().unwrap_or_default();
+            (name, b.path, b.branch, b.head_sha, ws_dir, old_entry)
+        })
+        .collect();
+
+    let computed: Vec<(String, WorktreeInfo, WorktreeCache)> = thread::scope(|scope| {
+        jobs.into_iter()
+            .map(|(name, path, branch, head_sha, ws_dir, entry)| {
+                scope.spawn(move || {
+                    compute_worktree_entry(name, path, branch, head_sha, ws_dir, entry)
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|h| h.join().expect("worktree info thread panicked"))
+            .collect()
+    });
+
+    let mut result = Vec::with_capacity(computed.len());
+    for (name, info, entry) in computed {
+        cache.worktrees.insert(name, entry);
+        result.push(info);
+    }
     result
 }
 
-fn read_ref_sha(bare: &Path, branch: &str) -> Option<String> {
-    let out = Command::new("git")
-        .args(["rev-parse", &format!("refs/heads/{branch}")])
-        .current_dir(bare)
-        .output()
-        .ok()?;
-    if out.status.success() {
-        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+fn compute_worktree_entry(
+    name: String,
+    path: PathBuf,
+    branch: String,
+    head_sha: Option<String>,
+    ws_dir: PathBuf,
+    mut entry: WorktreeCache,
+) -> (String, WorktreeInfo, WorktreeCache) {
+    let dirty = is_dirty(&path).unwrap_or(false);
+
+    // Use cached commit timestamp if HEAD hasn't moved; else re-fetch from git.
+    let commit_ts = match &head_sha {
+        Some(sha) if *sha == entry.head_sha => entry.commit_ts,
+        _ => {
+            let ts = commit_timestamp(&path).unwrap_or(0);
+            entry.head_sha = head_sha.unwrap_or_default();
+            entry.commit_ts = ts;
+            ts
+        }
+    };
+    let age_seconds = (chrono::Utc::now().timestamp() - commit_ts).max(0);
+
+    // Use cached ticket counts if the tickets directory mtime is unchanged.
+    let mtime = tickets_dir_mtime(&ws_dir);
+    let (tickets_pending, tickets_total) = if mtime != 0 && mtime == entry.tickets_dir_mtime {
+        (entry.tickets_pending, entry.tickets_total)
     } else {
-        None
-    }
+        let tickets = load_tickets(&ws_dir).unwrap_or_default();
+        let pending = tickets
+            .iter()
+            .filter(|t| t.status == Status::Pending)
+            .count();
+        let total = tickets.len();
+        entry.tickets_dir_mtime = mtime;
+        entry.tickets_pending = pending;
+        entry.tickets_total = total;
+        (pending, total)
+    };
+
+    let info = WorktreeInfo {
+        name: name.clone(),
+        branch,
+        dirty,
+        age_seconds,
+        tickets_pending,
+        tickets_total,
+    };
+    (name, info, entry)
 }
 
 fn tickets_dir_mtime(ws_dir: &Path) -> u64 {
