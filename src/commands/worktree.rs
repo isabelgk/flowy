@@ -21,6 +21,7 @@ pub fn dispatch(matches: &ArgMatches) -> Result<()> {
         Some(("ls", sub)) => ls(sub),
         Some(("archive", sub)) => archive(sub),
         Some(("unarchive", sub)) => unarchive(sub),
+        Some(("rename", sub)) => rename(sub),
         _ => Ok(()),
     }
 }
@@ -647,6 +648,201 @@ fn unarchive(matches: &ArgMatches) -> Result<()> {
     }
     println!("Unarchived {name}");
     Ok(())
+}
+
+fn rename(matches: &ArgMatches) -> Result<()> {
+    let root = get_repo_root(matches)?;
+    // Absolute root so fs::rename / `git -C` don't depend on cwd.
+    let root = root
+        .canonicalize()
+        .with_context(|| format!("resolving repo root {}", root.display()))?;
+    let json = matches.get_flag("json");
+    let old_name = matches.get_one::<String>("old").unwrap();
+    let new_branch = matches.get_one::<String>("new-branch").unwrap();
+    let new_name = safe_name(new_branch);
+
+    let old_ws_dir = crate::core::names::workstream_dir(&root, old_name);
+    if !old_ws_dir.exists() {
+        bail!(
+            "no workstream named '{old_name}' (looked in {})",
+            old_ws_dir.display()
+        );
+    }
+    let old_meta = read_meta(&old_ws_dir)?;
+    let old_branch = old_meta.worktree.branch.clone();
+
+    let old_worktree = worktrees_dir(&root).join(old_name);
+    let new_worktree = worktrees_dir(&root).join(&new_name);
+    let new_ws_dir = crate::core::names::workstream_dir(&root, &new_name);
+
+    let renaming_dirs = new_name != *old_name;
+    let renaming_branch = *new_branch != old_branch;
+
+    if !renaming_dirs && !renaming_branch {
+        bail!("'{old_name}' is already named '{new_branch}'; nothing to do");
+    }
+
+    // Only guard against clobbering when the safe-name actually changes; a
+    // branch-only rename (same safe-name) legitimately keeps its dirs.
+    if renaming_dirs {
+        if new_worktree.exists() {
+            bail!("target worktree already exists: {}", new_worktree.display());
+        }
+        if new_ws_dir.exists() {
+            bail!("target notes dir already exists: {}", new_ws_dir.display());
+        }
+        // Renaming the dir out from under the shell's cwd breaks the move and
+        // every `git -C` after it; refuse rather than half-move.
+        if old_worktree.exists()
+            && let (Ok(cwd), Ok(owt)) = (std::env::current_dir(), old_worktree.canonicalize())
+            && cwd
+                .canonicalize()
+                .map(|c| c.starts_with(&owt))
+                .unwrap_or(false)
+        {
+            bail!(
+                "run this from outside the worktree being renamed (cwd is under {})",
+                owt.display()
+            );
+        }
+    }
+
+    // Track progress so a mid-sequence failure reports what already moved.
+    let mut moved_branch = false;
+
+    if renaming_branch {
+        let status = Command::new("git")
+            .args(["branch", "-m", &old_branch, new_branch])
+            .current_dir(root.join(".bare"))
+            .status()
+            .context("running git branch -m")?;
+        if !status.success() {
+            bail!("git branch -m {old_branch} {new_branch} failed");
+        }
+        moved_branch = true;
+    }
+
+    if renaming_dirs
+        && old_worktree.exists()
+        && let Err(e) = move_worktree(&root, &old_worktree, &new_worktree)
+    {
+        // move_worktree may fail after the dir is already renamed (repair or
+        // submodule step); report based on where the dir actually is.
+        report_partial(moved_branch, &old_branch, new_branch, new_worktree.exists());
+        return Err(e);
+    }
+
+    if renaming_dirs
+        && let Err(e) = std::fs::rename(&old_ws_dir, &new_ws_dir).with_context(|| {
+            format!(
+                "moving {} to {}",
+                old_ws_dir.display(),
+                new_ws_dir.display()
+            )
+        })
+    {
+        report_partial(moved_branch, &old_branch, new_branch, true);
+        return Err(e);
+    }
+
+    let target_ws_dir = if renaming_dirs {
+        &new_ws_dir
+    } else {
+        &old_ws_dir
+    };
+    let meta = Meta {
+        created: old_meta.created,
+        worktree: WorktreeMeta {
+            path: new_worktree.to_string_lossy().into_owned(),
+            branch: new_branch.clone(),
+        },
+    };
+    write_meta(target_ws_dir, &meta)?;
+
+    // Stale entries under the old key; rebuilt on the next `ls`.
+    let mut cache = load_cache(&root);
+    cache.worktrees.remove(old_name);
+    cache.worktrees.remove(&new_name);
+    save_cache(&root, &cache);
+
+    if json {
+        return print_json(
+            &serde_json::json!({"ok": true, "name": new_name, "branch": new_branch}),
+        );
+    }
+    println!("Renamed {old_name} -> {new_name} (branch {new_branch})");
+    Ok(())
+}
+
+fn move_worktree(root: &Path, old: &Path, new: &Path) -> Result<()> {
+    // Fast path: git moves the dir and rewrites its own admin files.
+    let moved = Command::new("git")
+        .arg("worktree")
+        .arg("move")
+        .arg(old)
+        .arg(new)
+        .current_dir(root.join(".bare"))
+        .status()
+        .context("running git worktree move")?;
+    if moved.success() {
+        return Ok(());
+    }
+
+    // git refuses to move a worktree containing submodules, and the check is on
+    // the gitlinks in the tree (not on init state), so deinit alone won't let
+    // `git worktree move` succeed. Move it by hand and fix the admin pointers.
+    deinit_submodules(old);
+    std::fs::rename(old, new)
+        .with_context(|| format!("moving {} to {}", old.display(), new.display()))?;
+    repair_worktree_gitdir(new)?;
+
+    // Restore submodule working trees; this also refreshes each core.worktree.
+    let status = Command::new("git")
+        .args(["submodule", "update", "--init", "--recursive"])
+        .current_dir(new)
+        .status()
+        .context("running git submodule update --init --recursive")?;
+    if !status.success() {
+        bail!("git submodule update --init --recursive failed after manual move");
+    }
+    Ok(())
+}
+
+fn deinit_submodules(worktree: &Path) {
+    // Best-effort: a repo with no submodules has nothing to deinit.
+    let _ = Command::new("git")
+        .args(["submodule", "deinit", "--all", "-f"])
+        .current_dir(worktree)
+        .status();
+}
+
+fn repair_worktree_gitdir(new_worktree: &Path) -> Result<()> {
+    // The worktree's own .git file points (absolutely) at its admin dir under
+    // .bare/worktrees/<id>, unaffected by the move. Only the reverse pointer
+    // (admin/gitdir -> worktree/.git) still names the pre-move path.
+    let git_file = new_worktree.join(".git");
+    let content = std::fs::read_to_string(&git_file)
+        .with_context(|| format!("reading {}", git_file.display()))?;
+    let admin_dir = content
+        .lines()
+        .find_map(|l| l.strip_prefix("gitdir: "))
+        .map(|p| PathBuf::from(p.trim()))
+        .with_context(|| format!("no gitdir pointer in {}", git_file.display()))?;
+
+    let pointer = admin_dir.join("gitdir");
+    std::fs::write(&pointer, format!("{}\n", git_file.display()))
+        .with_context(|| format!("writing {}", pointer.display()))
+}
+
+fn report_partial(moved_branch: bool, old_branch: &str, new_branch: &str, moved_worktree: bool) {
+    eprintln!("rename left a partial state:");
+    if moved_branch {
+        eprintln!("  - branch renamed {old_branch} -> {new_branch} (not reverted)");
+    }
+    if moved_worktree {
+        eprintln!("  - worktree dir moved; notes dir and meta.toml not yet updated");
+    }
+    eprintln!("finish the remaining moves by hand, or re-run once resolved.");
 }
 
 #[cfg(test)]

@@ -47,6 +47,12 @@ Manage bare git worktrees.
 | `ls` | | List worktrees with status, ticket counts, and branch age |
 | `archive` | `ar` | Archive a workstream and remove its worktree |
 | `unarchive` | `un` | Restore an archived workstream |
+| `rename` | `mv` | Rename a workstream: branch, worktree dir, notes dir, and meta |
+
+`rename <old-name> <new-branch>` renames the git branch, moves both the
+worktree and notes directories to the new safe-name, and updates `meta.toml`.
+Worktrees containing submodules (which `git worktree move` refuses) are moved
+manually and their admin pointers repaired.
 
 ### `flowy ticket` (alias: `t`)
 

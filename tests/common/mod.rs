@@ -3,6 +3,35 @@ use std::path::{Path, PathBuf};
 use std::process;
 use tempfile::TempDir;
 
+/// Hermetic git identity so tests don't require the developer's git config.
+pub const GIT_ENV: [(&str, &str); 4] = [
+    ("GIT_AUTHOR_NAME", "Test"),
+    ("GIT_AUTHOR_EMAIL", "test@example.com"),
+    ("GIT_COMMITTER_NAME", "Test"),
+    ("GIT_COMMITTER_EMAIL", "test@example.com"),
+];
+
+/// Run git in `dir` with the hermetic identity, asserting success.
+pub fn git_in(dir: &Path, args: &[&str]) {
+    git_run(args, dir, &GIT_ENV);
+}
+
+/// Run git in `dir`, asserting success, and return its stdout.
+pub fn git_out(dir: &Path, args: &[&str]) -> String {
+    let mut cmd = process::Command::new("git");
+    cmd.args(args).current_dir(dir);
+    for (k, v) in GIT_ENV {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().expect("git command");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed in {}",
+        dir.display()
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
 pub struct TestRepo {
     // Keep TempDir alive for the duration of the test.
     _dir: TempDir,
@@ -15,13 +44,7 @@ impl TestRepo {
         let src = dir.path().join("src");
         let root = dir.path().join("repo");
 
-        // Hermetic git identity so tests don't require the developer's config.
-        let git_env = [
-            ("GIT_AUTHOR_NAME", "Test"),
-            ("GIT_AUTHOR_EMAIL", "test@example.com"),
-            ("GIT_COMMITTER_NAME", "Test"),
-            ("GIT_COMMITTER_EMAIL", "test@example.com"),
-        ];
+        let git_env = GIT_ENV;
 
         // Init source repo with an empty commit so it has a HEAD to clone.
         git_run(

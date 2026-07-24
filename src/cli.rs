@@ -79,6 +79,23 @@ fn worktree_cmd() -> Command {
                 .about("Restore an archived workstream")
                 .arg(Arg::new("name").required(true).index(1)),
         )
+        .subcommand(
+            Command::new("rename")
+                .visible_alias("mv")
+                .about("Rename a workstream: branch, worktree dir, notes dir, and meta")
+                .arg(
+                    Arg::new("old")
+                        .required(true)
+                        .index(1)
+                        .value_name("OLD_NAME"),
+                )
+                .arg(
+                    Arg::new("new-branch")
+                        .required(true)
+                        .index(2)
+                        .value_name("NEW_BRANCH"),
+                ),
+        )
 }
 
 fn ticket_cmd() -> Command {

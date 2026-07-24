@@ -1,6 +1,6 @@
 mod common;
 
-use common::TestRepo;
+use common::{TestRepo, git_in, git_out};
 use predicates::prelude::*;
 use std::fs;
 
@@ -1133,4 +1133,199 @@ fn clone_scaffolds_non_main_default_branch() {
     );
     let meta = read_meta(&ws);
     assert_eq!(meta.worktree.branch, "trunk");
+}
+
+#[test]
+fn wt_rename_moves_branch_dir_and_notes() {
+    let repo = TestRepo::new();
+
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat/old"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["t", "add", "Carry me", "-w", "feat-old"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .args(["wt", "rename", "feat-old", "feat/new"])
+        .assert()
+        .success();
+
+    let workstreams = repo.root.join("notes").join("workstreams");
+    assert!(!repo.root.join("worktrees").join("feat-old").exists());
+    assert!(!workstreams.join("feat-old").exists());
+
+    let new_wt = repo.root.join("worktrees").join("feat-new");
+    assert!(new_wt.is_dir(), "renamed worktree dir should exist");
+    let new_ws = workstreams.join("feat-new");
+    assert_eq!(read_meta(&new_ws).worktree.branch, "feat/new");
+
+    // Ticket carried over with the notes dir.
+    let tickets: Vec<_> = fs::read_dir(new_ws.join("tickets")).unwrap().collect();
+    assert_eq!(tickets.len(), 1, "ticket should move with the workstream");
+
+    // git sees the new branch at the new path, and the old branch is gone.
+    let list = git_out(&repo.root, &["worktree", "list", "--porcelain"]);
+    assert!(list.contains(new_wt.to_str().unwrap()));
+    assert!(!list.contains("feat-old"));
+}
+
+#[test]
+fn wt_rename_branch_only_keeps_dirs() {
+    let repo = TestRepo::new();
+
+    // safe_name("keep-me") == safe_name("keep/me"), so only the branch changes.
+    repo.cmd()
+        .args(["wt", "new", "-b", "keep-me"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .args(["wt", "rename", "keep-me", "keep/me"])
+        .assert()
+        .success();
+
+    let ws = repo.root.join("notes").join("workstreams").join("keep-me");
+    assert!(repo.root.join("worktrees").join("keep-me").is_dir());
+    assert_eq!(read_meta(&ws).worktree.branch, "keep/me");
+
+    let list = git_out(&repo.root, &["worktree", "list", "--porcelain"]);
+    assert!(list.contains("branch refs/heads/keep/me"));
+}
+
+#[test]
+fn wt_rename_missing_workstream_errors() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "rename", "nope", "feat/x"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no workstream named 'nope'"));
+}
+
+#[test]
+fn wt_rename_target_exists_errors() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat/a"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat/b"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .args(["wt", "rename", "feat-a", "feat/b"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already exists"));
+}
+
+#[test]
+fn wt_rename_json() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat/old"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .args(["--json", "wt", "rename", "feat-old", "feat/new"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"branch\": \"feat/new\""));
+}
+
+// The motivating case: `git worktree move` refuses worktrees containing
+// submodules, so rename must fall back to a manual move + admin repair.
+#[test]
+fn wt_rename_moves_worktree_with_submodule() {
+    let repo = TestRepo::new();
+
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat/sub"])
+        .assert()
+        .success();
+    let old_wt = repo.root.join("worktrees").join("feat-sub");
+
+    // A standalone repo to serve as the submodule's origin, outside the tree.
+    let outside = repo.root.parent().unwrap().to_path_buf();
+    let sub_src = outside.join("subsrc");
+    git_in(&outside, &["init", "-b", "main", sub_src.to_str().unwrap()]);
+    git_in(&sub_src, &["commit", "--allow-empty", "-m", "sub init"]);
+
+    // file:// submodules are blocked by default since git 2.38; allow them here.
+    git_in(
+        &old_wt,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub_src.to_str().unwrap(),
+            "sub",
+        ],
+    );
+    git_in(&old_wt, &["commit", "-m", "add submodule"]);
+
+    // Propagate the same allowance to the tool's own `submodule update`.
+    repo.cmd()
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "protocol.file.allow")
+        .env("GIT_CONFIG_VALUE_0", "always")
+        .args(["wt", "rename", "feat-sub", "feat/renamed"])
+        .assert()
+        .success();
+
+    let new_wt = repo.root.join("worktrees").join("feat-renamed");
+    assert!(!old_wt.exists(), "old worktree dir should be gone");
+    assert!(
+        new_wt.join("sub").join(".git").exists(),
+        "submodule should be restored at the new path"
+    );
+
+    // git tracks the worktree at its new path only.
+    let list = git_out(&repo.root, &["worktree", "list", "--porcelain"]);
+    assert!(list.contains(new_wt.to_str().unwrap()));
+    assert!(!list.contains("feat-sub"));
+
+    // Submodule pointers are healthy: a leading space means in-sync (no +/-/U).
+    let status = git_out(&new_wt, &["submodule", "status", "--recursive"]);
+    assert!(!status.trim().is_empty(), "expected a submodule entry");
+    for line in status.lines() {
+        assert!(line.starts_with(' '), "submodule out of sync: {line:?}");
+    }
+
+    assert_eq!(
+        read_meta(
+            &repo
+                .root
+                .join("notes")
+                .join("workstreams")
+                .join("feat-renamed")
+        )
+        .worktree
+        .branch,
+        "feat/renamed"
+    );
+}
+
+#[test]
+fn wt_rename_refuses_from_inside_worktree() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat/x"])
+        .assert()
+        .success();
+
+    let wt = repo.root.join("worktrees").join("feat-x");
+    repo.cmd()
+        .current_dir(&wt)
+        .args(["wt", "rename", "feat-x", "feat/y"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("outside the worktree"));
 }
