@@ -46,9 +46,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(outer[0]);
 
-    // Scrolling is in text rows, so exclude the preview block's top and bottom borders.
-    app.preview_height = chunks[1].height.saturating_sub(2);
-
     match app.view {
         View::Tickets => render_tickets(f, app, chunks[0], chunks[1]),
         View::Worktrees => render_worktrees(f, app, chunks[0], chunks[1]),
@@ -57,11 +54,14 @@ pub fn render(f: &mut Frame, app: &mut App) {
     render_help(f, app, outer[1]);
 }
 
-fn render_tickets(f: &mut Frame, app: &App, left: Rect, right: Rect) {
+fn render_tickets(f: &mut Frame, app: &mut App, left: Rect, right: Rect) {
     let left_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(0)])
         .split(left);
+
+    // A page is the rows inside the block, so exclude the top and bottom borders.
+    app.list_height = left_chunks[1].height.saturating_sub(2);
 
     let (search_border_style, search_text) = match app.input_mode {
         InputMode::Search => (
@@ -149,8 +149,7 @@ fn render_tickets(f: &mut Frame, app: &App, left: Rect, right: Rect) {
         f.render_widget(
             Paragraph::new(lines)
                 .block(right_block.title(title))
-                .wrap(Wrap { trim: false })
-                .scroll((app.preview_scroll, 0)),
+                .wrap(Wrap { trim: false }),
             right,
         );
     } else {
@@ -158,7 +157,9 @@ fn render_tickets(f: &mut Frame, app: &App, left: Rect, right: Rect) {
     }
 }
 
-fn render_worktrees(f: &mut Frame, app: &App, left: Rect, right: Rect) {
+fn render_worktrees(f: &mut Frame, app: &mut App, left: Rect, right: Rect) {
+    app.list_height = left.height.saturating_sub(2);
+
     let worktrees = app.worktree_list();
     let items: Vec<ListItem> = worktrees
         .iter()

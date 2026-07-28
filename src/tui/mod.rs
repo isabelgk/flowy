@@ -51,10 +51,9 @@ pub struct App {
     pub query: String,
     pub ticket_selected: usize,
     pub worktree_selected: usize,
-    pub preview_scroll: u16,
-    // Inner height of the preview pane, recorded each render so key handling
-    // can size a half-page scroll.
-    pub preview_height: u16,
+    // Inner height of the list pane, recorded each render so key handling can
+    // size a half-page scroll.
+    pub list_height: u16,
     pub should_quit: bool,
 }
 
@@ -110,7 +109,6 @@ impl App {
             .collect();
         self.ticket_selected = 0;
         self.query.clear();
-        self.preview_scroll = 0;
         self.input_mode = InputMode::Normal;
     }
 
@@ -130,8 +128,8 @@ impl App {
 
     /// Never zero, so scrolling still works on a short terminal or before the
     /// first render has recorded a height.
-    fn half_page(&self) -> u16 {
-        (self.preview_height / 2).max(1)
+    fn half_page(&self) -> usize {
+        usize::from(self.list_height / 2).max(1)
     }
 
     /// Returns the path to open in $EDITOR, if requested.
@@ -157,7 +155,6 @@ impl App {
             InputMode::Normal => match key.code {
                 KeyCode::Tab => {
                     self.view = View::Worktrees;
-                    self.preview_scroll = 0;
                     self.ensure_worktrees_loaded();
                     self.update_worktree_preview();
                 }
@@ -167,23 +164,24 @@ impl App {
                 {
                     if !filtered.is_empty() {
                         self.ticket_selected = (self.ticket_selected + 1).min(filtered.len() - 1);
-                        self.preview_scroll = 0;
                     }
                 }
                 KeyCode::Up | KeyCode::Char('k')
                     if !key.modifiers.contains(KeyModifiers::CONTROL)
                         && !key.modifiers.contains(KeyModifiers::ALT) =>
                 {
-                    if self.ticket_selected > 0 {
-                        self.ticket_selected -= 1;
-                        self.preview_scroll = 0;
-                    }
+                    self.ticket_selected = self.ticket_selected.saturating_sub(1);
                 }
                 KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.preview_scroll = self.preview_scroll.saturating_add(self.half_page());
+                    if !filtered.is_empty() {
+                        self.ticket_selected = self
+                            .ticket_selected
+                            .saturating_add(self.half_page())
+                            .min(filtered.len() - 1);
+                    }
                 }
                 KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.preview_scroll = self.preview_scroll.saturating_sub(self.half_page());
+                    self.ticket_selected = self.ticket_selected.saturating_sub(self.half_page());
                 }
                 KeyCode::Char('i') => {
                     self.input_mode = InputMode::Search;
@@ -211,20 +209,15 @@ impl App {
                 KeyCode::Down => {
                     if !filtered.is_empty() {
                         self.ticket_selected = (self.ticket_selected + 1).min(filtered.len() - 1);
-                        self.preview_scroll = 0;
                     }
                 }
                 KeyCode::Up => {
-                    if self.ticket_selected > 0 {
-                        self.ticket_selected -= 1;
-                        self.preview_scroll = 0;
-                    }
+                    self.ticket_selected = self.ticket_selected.saturating_sub(1);
                 }
                 KeyCode::Backspace => {
                     self.query.pop();
                     let new_len = self.filtered_tickets().len();
                     self.ticket_selected = self.ticket_selected.min(new_len.saturating_sub(1));
-                    self.preview_scroll = 0;
                 }
                 KeyCode::Char(c)
                     if !key.modifiers.contains(KeyModifiers::CONTROL)
@@ -233,7 +226,6 @@ impl App {
                     self.query.push(c);
                     let new_len = self.filtered_tickets().len();
                     self.ticket_selected = self.ticket_selected.min(new_len.saturating_sub(1));
-                    self.preview_scroll = 0;
                 }
                 _ => {}
             },
@@ -245,7 +237,6 @@ impl App {
         match key.code {
             KeyCode::Tab => {
                 self.view = View::Tickets;
-                self.preview_scroll = 0;
             }
             KeyCode::Down | KeyCode::Char('j')
                 if !key.modifiers.contains(KeyModifiers::CONTROL)
@@ -254,7 +245,6 @@ impl App {
                 if !self.worktree_list().is_empty() {
                     self.worktree_selected =
                         (self.worktree_selected + 1).min(self.worktree_list().len() - 1);
-                    self.preview_scroll = 0;
                     self.update_worktree_preview();
                 }
             }
@@ -262,18 +252,27 @@ impl App {
                 if !key.modifiers.contains(KeyModifiers::CONTROL)
                     && !key.modifiers.contains(KeyModifiers::ALT) =>
             {
-                if self.worktree_selected > 0 {
-                    self.worktree_selected -= 1;
-                    self.preview_scroll = 0;
+                self.worktree_selected = self.worktree_selected.saturating_sub(1);
+                self.update_worktree_preview();
+            }
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if !self.worktree_list().is_empty() {
+                    self.worktree_selected = self
+                        .worktree_selected
+                        .saturating_add(self.half_page())
+                        .min(self.worktree_list().len() - 1);
                     self.update_worktree_preview();
                 }
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.worktree_selected = self.worktree_selected.saturating_sub(self.half_page());
+                self.update_worktree_preview();
             }
             KeyCode::Enter => {
                 if let Some(wt) = self.worktree_list().get(self.worktree_selected) {
                     let name = wt.name.clone();
                     self.load_tickets_for_workstream(&name);
                     self.view = View::Tickets;
-                    self.preview_scroll = 0;
                 }
             }
             _ => {}
@@ -373,8 +372,7 @@ pub fn run(root: &Path) -> Result<()> {
         query: String::new(),
         ticket_selected: 0,
         worktree_selected: 0,
-        preview_scroll: 0,
-        preview_height: 0,
+        list_height: 0,
         should_quit: false,
     };
 
@@ -428,4 +426,68 @@ fn run_loop(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+
+    // 80x22 puts 16 rows inside the ticket list block, so a half page is 8.
+    const TERM_WIDTH: u16 = 80;
+    const TERM_HEIGHT: u16 = 22;
+
+    fn app_with_tickets(count: u32) -> App {
+        App {
+            root: PathBuf::new(),
+            view: View::Tickets,
+            input_mode: InputMode::Normal,
+            active_workstream: "test".to_string(),
+            tickets: (1..=count)
+                .map(|n| TuiTicket {
+                    number: n,
+                    title: format!("ticket {n}"),
+                    status: Status::Pending,
+                    content: String::new(),
+                    path: PathBuf::new(),
+                })
+                .collect(),
+            worktrees: Some(Vec::new()),
+            worktree_preview: Vec::new(),
+            query: String::new(),
+            ticket_selected: 0,
+            worktree_selected: 0,
+            list_height: 0,
+            should_quit: false,
+        }
+    }
+
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn ctrl_d_and_ctrl_u_move_selection_by_half_the_list_height() {
+        let mut app = app_with_tickets(30);
+        let mut terminal = Terminal::new(TestBackend::new(TERM_WIDTH, TERM_HEIGHT)).unwrap();
+        terminal.draw(|f| ui::render(f, &mut app)).unwrap();
+        assert_eq!(app.list_height, 16);
+
+        app.handle_key(ctrl('d'));
+        assert_eq!(app.ticket_selected, 8);
+
+        app.handle_key(ctrl('u'));
+        assert_eq!(app.ticket_selected, 0);
+    }
+
+    #[test]
+    fn ctrl_d_stops_at_the_last_ticket() {
+        let mut app = app_with_tickets(10);
+        let mut terminal = Terminal::new(TestBackend::new(TERM_WIDTH, TERM_HEIGHT)).unwrap();
+        terminal.draw(|f| ui::render(f, &mut app)).unwrap();
+
+        app.handle_key(ctrl('d'));
+        app.handle_key(ctrl('d'));
+        assert_eq!(app.ticket_selected, 9);
+    }
 }
