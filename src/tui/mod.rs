@@ -52,6 +52,9 @@ pub struct App {
     pub ticket_selected: usize,
     pub worktree_selected: usize,
     pub preview_scroll: u16,
+    // Inner height of the preview pane, recorded each render so key handling
+    // can size a half-page scroll.
+    pub preview_height: u16,
     pub should_quit: bool,
 }
 
@@ -125,6 +128,12 @@ impl App {
         }
     }
 
+    /// Never zero, so scrolling still works on a short terminal or before the
+    /// first render has recorded a height.
+    fn half_page(&self) -> u16 {
+        (self.preview_height / 2).max(1)
+    }
+
     /// Returns the path to open in $EDITOR, if requested.
     pub fn handle_key(&mut self, key: KeyEvent) -> Option<PathBuf> {
         if key.kind != KeyEventKind::Press {
@@ -171,10 +180,10 @@ impl App {
                     }
                 }
                 KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.preview_scroll = self.preview_scroll.saturating_add(10);
+                    self.preview_scroll = self.preview_scroll.saturating_add(self.half_page());
                 }
                 KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.preview_scroll = self.preview_scroll.saturating_sub(10);
+                    self.preview_scroll = self.preview_scroll.saturating_sub(self.half_page());
                 }
                 KeyCode::Char('i') => {
                     self.input_mode = InputMode::Search;
@@ -365,6 +374,7 @@ pub fn run(root: &Path) -> Result<()> {
         ticket_selected: 0,
         worktree_selected: 0,
         preview_scroll: 0,
+        preview_height: 0,
         should_quit: false,
     };
 

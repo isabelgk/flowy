@@ -35,7 +35,7 @@ fn status_label(status: &Status) -> &'static str {
     }
 }
 
-pub fn render(f: &mut Frame, app: &App) {
+pub fn render(f: &mut Frame, app: &mut App) {
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(1)])
@@ -45,6 +45,9 @@ pub fn render(f: &mut Frame, app: &App) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(outer[0]);
+
+    // Scrolling is in text rows, so exclude the preview block's top and bottom borders.
+    app.preview_height = chunks[1].height.saturating_sub(2);
 
     match app.view {
         View::Tickets => render_tickets(f, app, chunks[0], chunks[1]),
