@@ -118,7 +118,7 @@ fn render_tickets(f: &mut Frame, app: &mut App, left: Rect, right: Rect) {
         .collect();
 
     let clamped = app.ticket_selected.min(filtered.len().saturating_sub(1));
-    let mut list_state = ListState::default();
+    let mut list_state = ListState::default().with_offset(app.ticket_offset);
     if !filtered.is_empty() {
         list_state.select(Some(clamped));
     }
@@ -130,6 +130,7 @@ fn render_tickets(f: &mut Frame, app: &mut App, left: Rect, right: Rect) {
         left_chunks[1],
         &mut list_state,
     );
+    app.ticket_offset = list_state.offset();
 
     let right_block = Block::default().borders(Borders::ALL);
     if let Some(&idx) = filtered.get(clamped) {
@@ -188,7 +189,7 @@ fn render_worktrees(f: &mut Frame, app: &mut App, left: Rect, right: Rect) {
         .collect();
 
     let clamped = app.worktree_selected.min(worktrees.len().saturating_sub(1));
-    let mut list_state = ListState::default();
+    let mut list_state = ListState::default().with_offset(app.worktree_offset);
     if !worktrees.is_empty() {
         list_state.select(Some(clamped));
     }
@@ -200,9 +201,10 @@ fn render_worktrees(f: &mut Frame, app: &mut App, left: Rect, right: Rect) {
         left,
         &mut list_state,
     );
+    app.worktree_offset = list_state.offset();
 
     let right_block = Block::default().borders(Borders::ALL);
-    if let Some(wt) = worktrees.get(clamped) {
+    if let Some(wt) = app.worktree_list().get(clamped) {
         let lines: Vec<Line> = app
             .worktree_preview
             .iter()

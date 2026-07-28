@@ -51,6 +51,10 @@ pub struct App {
     pub query: String,
     pub ticket_selected: usize,
     pub worktree_selected: usize,
+    // Index of the first visible row in each list. Persisted across frames so
+    // the viewport stays put instead of snapping back to the top.
+    pub ticket_offset: usize,
+    pub worktree_offset: usize,
     // Inner height of the list pane, recorded each render so key handling can
     // size a half-page scroll.
     pub list_height: u16,
@@ -109,6 +113,7 @@ impl App {
             .collect();
         self.ticket_selected = 0;
         self.query.clear();
+        self.ticket_offset = 0;
         self.input_mode = InputMode::Normal;
     }
 
@@ -218,6 +223,7 @@ impl App {
                     self.query.pop();
                     let new_len = self.filtered_tickets().len();
                     self.ticket_selected = self.ticket_selected.min(new_len.saturating_sub(1));
+                    self.ticket_offset = 0;
                 }
                 KeyCode::Char(c)
                     if !key.modifiers.contains(KeyModifiers::CONTROL)
@@ -226,6 +232,7 @@ impl App {
                     self.query.push(c);
                     let new_len = self.filtered_tickets().len();
                     self.ticket_selected = self.ticket_selected.min(new_len.saturating_sub(1));
+                    self.ticket_offset = 0;
                 }
                 _ => {}
             },
@@ -372,6 +379,8 @@ pub fn run(root: &Path) -> Result<()> {
         query: String::new(),
         ticket_selected: 0,
         worktree_selected: 0,
+        ticket_offset: 0,
+        worktree_offset: 0,
         list_height: 0,
         should_quit: false,
     };
@@ -457,6 +466,8 @@ mod tests {
             query: String::new(),
             ticket_selected: 0,
             worktree_selected: 0,
+            ticket_offset: 0,
+            worktree_offset: 0,
             list_height: 0,
             should_quit: false,
         }
@@ -489,5 +500,32 @@ mod tests {
         app.handle_key(ctrl('d'));
         app.handle_key(ctrl('d'));
         assert_eq!(app.ticket_selected, 9);
+    }
+
+    #[test]
+    fn list_viewport_stays_put_when_scrolling_back_up() {
+        let mut app = app_with_tickets(30);
+        let mut terminal = Terminal::new(TestBackend::new(TERM_WIDTH, TERM_HEIGHT)).unwrap();
+        let mut draw = |app: &mut App| {
+            terminal.draw(|f| ui::render(f, app)).unwrap();
+        };
+        draw(&mut app);
+
+        // Push the selection past the bottom of the viewport so the top row is
+        // no longer the first ticket.
+        for _ in 0..3 {
+            app.handle_key(ctrl('d'));
+            draw(&mut app);
+        }
+        let scrolled_offset = app.ticket_offset;
+        assert!(scrolled_offset > 0);
+
+        app.handle_key(ctrl('u'));
+        draw(&mut app);
+        assert_eq!(app.ticket_offset, scrolled_offset);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE));
+        draw(&mut app);
+        assert_eq!(app.ticket_offset, scrolled_offset);
     }
 }
