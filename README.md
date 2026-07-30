@@ -104,3 +104,30 @@ flowy completions zsh > "${fpath[1]}/_flowy"
 flowy completions bash > /etc/bash_completion.d/flowy
 flowy completions fish > ~/.config/fish/completions/flowy.fish
 ```
+
+## Claude Code skill
+
+`skills/flowy/` teaches an agent both the CLI and the workstream style of
+working - planning in writing, decomposing into verifiable tickets, journaling
+implementation, and archiving on completion. Install it by copying it into your
+skills directory:
+
+```sh
+just skill-link      # symlink into ~/.claude/skills; edits here take effect at once
+just skill-install   # copy into ~/.claude/skills, pinned against further edits
+```
+
+Both overwrite whatever is already at `~/.claude/skills/flowy`. To scope the
+skill to one project instead, copy it into that project's `.claude/skills/`.
+
+It exposes six verbs, and also triggers on the equivalent plain-language
+request:
+
+```
+/flowy new igk/my-feature                     # branch + worktree + notes
+/flowy plan igk-my-feature                     # planning.md + tickets
+/flowy ticket igk-my-feature "crash on EOF"    # one ad-hoc ticket
+/flowy next igk-my-feature                     # what to pick up, into next.md
+/flowy implement igk-my-feature 3              # build, journal, mark done
+/flowy close igk-my-feature                    # audit + archive
+```
