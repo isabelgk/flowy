@@ -1,6 +1,6 @@
 mod common;
 
-use common::{TestRepo, git_in, git_out};
+use common::{TestRepo, archived_ws_dir_in, git_in, git_out, ws_dir_in};
 use predicates::prelude::*;
 use std::fs;
 
@@ -32,11 +32,7 @@ fn wt_new_creates_worktree_and_meta() {
     let worktree = repo.root.join("worktrees").join("test-branch");
     assert!(worktree.is_dir(), "worktree directory should exist");
 
-    let ws_dir = repo
-        .root
-        .join("notes")
-        .join("workstreams")
-        .join("test-branch");
+    let ws_dir = ws_dir_in(&repo.root, "test-branch");
     let meta = read_meta(&ws_dir);
     assert_eq!(meta.worktree.branch, "test/branch");
     assert!(!meta.created.is_empty());
@@ -56,11 +52,7 @@ fn t_add_creates_ticket_with_h1() {
         .assert()
         .success();
 
-    let ticket = repo
-        .root
-        .join("notes")
-        .join("workstreams")
-        .join("test-branch")
+    let ticket = ws_dir_in(&repo.root, "test-branch")
         .join("tickets")
         .join("001.md");
     assert!(ticket.exists(), "ticket file should exist");
@@ -86,11 +78,7 @@ fn t_done_rewrites_heading_and_appends_summary() {
         .assert()
         .success();
 
-    let ticket = repo
-        .root
-        .join("notes")
-        .join("workstreams")
-        .join("test-branch")
+    let ticket = ws_dir_in(&repo.root, "test-branch")
         .join("tickets")
         .join("001.md");
     let content = fs::read_to_string(&ticket).unwrap();
@@ -174,6 +162,36 @@ fn wt_ls_json_correct_ticket_counts() {
     assert_eq!(entry["tickets_total"], 1);
 }
 
+// Workstream notes live inside the working tree, so without an exclude entry
+// every worktree reads as dirty and `git worktree remove` refuses. Asserted
+// with core.excludesFile disabled so a developer's global ignore cannot mask a
+// regression here.
+#[test]
+fn workstream_dir_is_excluded_from_git_status() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "test/branch"])
+        .assert()
+        .success();
+
+    let worktree = repo.root.join("worktrees").join("test-branch");
+    assert!(repo.ws_dir("test-branch").join("meta.toml").exists());
+
+    let status = git_out(
+        &worktree,
+        &[
+            "-c",
+            "core.excludesFile=",
+            "status",
+            "--porcelain",
+            "--untracked-files=normal",
+        ],
+    );
+    assert_eq!(status, "", "workstream dir must not show as untracked");
+}
+
+// Archiving without --force must not trip the dirty check on the workstream
+// dir the worktree now contains; an unignored .local/ would make it prompt.
 #[test]
 fn wt_archive_removes_worktree_and_moves_notes() {
     let repo = TestRepo::new();
@@ -192,21 +210,11 @@ fn wt_archive_removes_worktree_and_moves_notes() {
         "worktree should be removed"
     );
     assert!(
-        !repo
-            .root
-            .join("notes")
-            .join("workstreams")
-            .join("test-branch")
-            .exists(),
+        !ws_dir_in(&repo.root, "test-branch").exists(),
         "notes should be moved out of workstreams"
     );
     assert!(
-        repo.root
-            .join("notes")
-            .join("workstreams")
-            .join("archive")
-            .join("test-branch")
-            .exists(),
+        archived_ws_dir_in(&repo.root, "test-branch").exists(),
         "notes should exist in archive"
     );
 }
@@ -233,21 +241,11 @@ fn wt_unarchive_restores_worktree_and_notes() {
         "worktree should be restored"
     );
     assert!(
-        repo.root
-            .join("notes")
-            .join("workstreams")
-            .join("test-branch")
-            .exists(),
+        ws_dir_in(&repo.root, "test-branch").exists(),
         "notes should be restored"
     );
     assert!(
-        !repo
-            .root
-            .join("notes")
-            .join("workstreams")
-            .join("archive")
-            .join("test-branch")
-            .exists(),
+        !archived_ws_dir_in(&repo.root, "test-branch").exists(),
         "archive entry should be removed"
     );
 }
@@ -367,9 +365,7 @@ fn t_done_wont_implement() {
         .assert()
         .success();
 
-    let ticket = repo
-        .root
-        .join("notes/workstreams/test-branch/tickets/001.md");
+    let ticket = repo.ticket("test-branch", 1);
     let content = fs::read_to_string(ticket).unwrap();
     assert!(content.contains("status = \"wont-implement\""));
     assert!(content.contains("title = \"My ticket\""));
@@ -396,9 +392,7 @@ fn t_done_reopen_complete_ticket() {
         .assert()
         .success();
 
-    let ticket = repo
-        .root
-        .join("notes/workstreams/test-branch/tickets/001.md");
+    let ticket = repo.ticket("test-branch", 1);
     let content = fs::read_to_string(ticket).unwrap();
     assert!(content.contains("status = \"pending\""));
     assert!(content.contains("title = \"My ticket\""));
@@ -448,9 +442,7 @@ fn t_add_with_description() {
         .assert()
         .success();
 
-    let ticket = repo
-        .root
-        .join("notes/workstreams/test-branch/tickets/001.md");
+    let ticket = repo.ticket("test-branch", 1);
     let content = fs::read_to_string(ticket).unwrap();
     assert!(content.starts_with("+++\n"));
     assert!(content.contains("title = \"My ticket\""));
@@ -492,9 +484,7 @@ fn t_add_increments_ticket_number() {
         .assert()
         .success();
 
-    let ticket = repo
-        .root
-        .join("notes/workstreams/test-branch/tickets/002.md");
+    let ticket = repo.ticket("test-branch", 2);
     assert!(ticket.exists());
 }
 
@@ -515,9 +505,7 @@ fn t_journal_appends_entry() {
         .assert()
         .success();
 
-    let ticket = repo
-        .root
-        .join("notes/workstreams/test-branch/tickets/001.md");
+    let ticket = repo.ticket("test-branch", 1);
     let content = fs::read_to_string(ticket).unwrap();
     assert!(content.contains("## Journal"));
     assert!(content.contains("Started work"));
@@ -549,9 +537,7 @@ fn t_journal_with_heading() {
         .assert()
         .success();
 
-    let ticket = repo
-        .root
-        .join("notes/workstreams/test-branch/tickets/001.md");
+    let ticket = repo.ticket("test-branch", 1);
     let content = fs::read_to_string(ticket).unwrap();
     assert!(content.contains("Day 1"));
     assert!(content.contains("Progress"));
@@ -729,11 +715,7 @@ fn t_infers_workstream_from_worktree_branch() {
         .assert()
         .success();
 
-    assert!(
-        repo.root
-            .join("notes/workstreams/test-branch/tickets/001.md")
-            .exists()
-    );
+    assert!(repo.ticket("test-branch", 1).exists());
 }
 
 #[test]
@@ -756,16 +738,11 @@ fn t_w_flag_overrides_inferred_branch() {
         .success();
 
     assert!(
-        repo.root
-            .join("notes/workstreams/target-branch/tickets/001.md")
-            .exists(),
+        repo.ticket("target-branch", 1).exists(),
         "ticket should land in target-branch, not other-branch"
     );
     assert!(
-        !repo
-            .root
-            .join("notes/workstreams/other-branch/tickets/001.md")
-            .exists(),
+        !repo.ticket("other-branch", 1).exists(),
         "ticket should not land in other-branch"
     );
 }
@@ -853,11 +830,7 @@ fn init_creates_project_structure() {
         "worktrees/main should exist"
     );
     assert!(
-        project
-            .join("notes")
-            .join("workstreams")
-            .join("main")
-            .is_dir(),
+        ws_dir_in(&project, "main").is_dir(),
         "notes/workstreams/main should exist"
     );
     assert!(
@@ -869,7 +842,7 @@ fn init_creates_project_structure() {
         "notes/workstreams/archive should exist"
     );
 
-    let meta = read_meta(&project.join("notes").join("workstreams").join("main"));
+    let meta = read_meta(&ws_dir_in(&project, "main"));
     assert_eq!(meta.worktree.branch, "main");
     assert!(!meta.created.is_empty());
 }
@@ -979,13 +952,7 @@ fn t_done_summary_not_duplicated_on_second_call() {
         .assert()
         .success();
 
-    let ticket_path = repo
-        .root
-        .join("notes")
-        .join("workstreams")
-        .join("feat")
-        .join("tickets")
-        .join("001.md");
+    let ticket_path = ws_dir_in(&repo.root, "feat").join("tickets").join("001.md");
     let content = fs::read_to_string(&ticket_path).unwrap();
     assert_eq!(
         content.matches("## Summary").count(),
@@ -1025,17 +992,12 @@ fn wt_unarchive_rolls_back_notes_on_git_failure() {
         .failure();
 
     // Notes must be rolled back to archive, not stranded in workstreams.
-    let archive_dir = repo
-        .root
-        .join("notes")
-        .join("workstreams")
-        .join("archive")
-        .join("feat");
+    let archive_dir = archived_ws_dir_in(&repo.root, "feat");
     assert!(
         archive_dir.is_dir(),
         "notes should be rolled back to archive after failed unarchive"
     );
-    let ws_dir = repo.root.join("notes").join("workstreams").join("feat");
+    let ws_dir = ws_dir_in(&repo.root, "feat");
     assert!(
         !ws_dir.exists(),
         "notes must not remain in workstreams after failed unarchive"
@@ -1081,7 +1043,7 @@ fn clone_scaffolds_default_branch_workstream() {
         project.join("worktrees").join("main").is_dir(),
         "worktrees/main should exist after clone"
     );
-    let ws_main = project.join("notes").join("workstreams").join("main");
+    let ws_main = ws_dir_in(&project, "main");
     assert!(
         ws_main.is_dir(),
         "notes/workstreams/main should exist after clone"
@@ -1126,7 +1088,7 @@ fn clone_scaffolds_non_main_default_branch() {
         project.join("worktrees").join("trunk").is_dir(),
         "worktrees/trunk should exist after clone"
     );
-    let ws = project.join("notes").join("workstreams").join("trunk");
+    let ws = ws_dir_in(&project, "trunk");
     assert!(
         ws.is_dir(),
         "notes/workstreams/trunk should exist after clone"
@@ -1153,16 +1115,15 @@ fn wt_rename_moves_branch_dir_and_notes() {
         .assert()
         .success();
 
-    let workstreams = repo.root.join("notes").join("workstreams");
     assert!(!repo.root.join("worktrees").join("feat-old").exists());
-    assert!(!workstreams.join("feat-old").exists());
+    assert!(!repo.ws_dir("feat-old").exists());
 
     let new_wt = repo.root.join("worktrees").join("feat-new");
     assert!(new_wt.is_dir(), "renamed worktree dir should exist");
-    let new_ws = workstreams.join("feat-new");
+    let new_ws = repo.ws_dir("feat-new");
     assert_eq!(read_meta(&new_ws).worktree.branch, "feat/new");
 
-    // Ticket carried over with the notes dir.
+    // Ticket carried over inside the worktree.
     let tickets: Vec<_> = fs::read_dir(new_ws.join("tickets")).unwrap().collect();
     assert_eq!(tickets.len(), 1, "ticket should move with the workstream");
 
@@ -1187,7 +1148,7 @@ fn wt_rename_branch_only_keeps_dirs() {
         .assert()
         .success();
 
-    let ws = repo.root.join("notes").join("workstreams").join("keep-me");
+    let ws = ws_dir_in(&repo.root, "keep-me");
     assert!(repo.root.join("worktrees").join("keep-me").is_dir());
     assert_eq!(read_meta(&ws).worktree.branch, "keep/me");
 
@@ -1300,15 +1261,9 @@ fn wt_rename_moves_worktree_with_submodule() {
     }
 
     assert_eq!(
-        read_meta(
-            &repo
-                .root
-                .join("notes")
-                .join("workstreams")
-                .join("feat-renamed")
-        )
-        .worktree
-        .branch,
+        read_meta(&ws_dir_in(&repo.root, "feat-renamed"))
+            .worktree
+            .branch,
         "feat/renamed"
     );
 }
@@ -1328,4 +1283,152 @@ fn wt_rename_refuses_from_inside_worktree() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("outside the worktree"));
+}
+
+// Hand-build the pre-move layout: notes at <root>/notes/workstreams/<name>/
+// beside an existing worktree.
+fn seed_old_layout(root: &std::path::Path, name: &str, with_worktree: bool) -> std::path::PathBuf {
+    let old = root.join("notes").join("workstreams").join(name);
+    fs::create_dir_all(old.join("tickets")).unwrap();
+    fs::write(
+        old.join("tickets").join("001.md"),
+        "+++\ntitle = \"legacy\"\nstatus = \"pending\"\n+++\nbody\n",
+    )
+    .unwrap();
+    fs::write(
+        old.join("meta.toml"),
+        format!("created = \"x\"\n[worktree]\npath = \"p\"\nbranch = \"{name}\"\n"),
+    )
+    .unwrap();
+    if with_worktree {
+        git_in(
+            &root.join(".bare"),
+            &[
+                "worktree",
+                "add",
+                root.join("worktrees").join(name).to_str().unwrap(),
+                "-b",
+                name,
+            ],
+        );
+    }
+    old
+}
+
+#[test]
+fn migrate_moves_notes_into_worktree() {
+    let repo = TestRepo::new();
+    let old = seed_old_layout(&repo.root, "legacy", true);
+
+    repo.cmd().arg("migrate").assert().success();
+
+    assert!(!old.exists(), "old notes dir should be gone");
+    assert!(
+        repo.ticket("legacy", 1).exists(),
+        "ticket should land inside the worktree"
+    );
+    assert_eq!(
+        read_meta(&repo.ws_dir("legacy")).worktree.branch,
+        "legacy",
+        "meta should move intact"
+    );
+
+    // The migrated workstream is now visible to the normal commands.
+    let output = repo
+        .cmd()
+        .args(["t", "list", "-w", "legacy", "--json"])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json.as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn migrate_dry_run_moves_nothing() {
+    let repo = TestRepo::new();
+    let old = seed_old_layout(&repo.root, "legacy", true);
+
+    repo.cmd()
+        .args(["migrate", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("would move legacy"));
+
+    assert!(old.is_dir(), "dry run must leave the old dir in place");
+    assert!(!repo.ws_dir("legacy").exists());
+}
+
+#[test]
+fn migrate_reports_notes_without_a_worktree() {
+    let repo = TestRepo::new();
+    let old = seed_old_layout(&repo.root, "orphan", false);
+
+    repo.cmd()
+        .arg("migrate")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("orphaned orphan"));
+
+    assert!(old.is_dir(), "orphaned notes must be left alone");
+}
+
+#[test]
+fn migrate_leaves_archive_alone_and_is_idempotent() {
+    let repo = TestRepo::new();
+    seed_old_layout(&repo.root, "legacy", true);
+    let archived = archived_ws_dir_in(&repo.root, "old-thing");
+    fs::create_dir_all(&archived).unwrap();
+
+    repo.cmd().arg("migrate").assert().success();
+    assert!(archived.is_dir(), "archive entries must not be migrated");
+
+    // Second run has nothing left to do and must not fail.
+    repo.cmd()
+        .arg("migrate")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Nothing to migrate"));
+    assert!(repo.ticket("legacy", 1).exists());
+}
+
+#[test]
+fn migrate_adds_the_exclude_entry() {
+    let repo = TestRepo::new();
+    let exclude = repo.root.join(".bare").join("info").join("exclude");
+    fs::write(&exclude, "# pre-existing\n*.tmp\n").unwrap();
+
+    repo.cmd().arg("migrate").assert().success();
+
+    let content = fs::read_to_string(&exclude).unwrap();
+    assert!(content.contains(".local/"), "exclude entry should be added");
+    assert!(
+        content.contains("*.tmp"),
+        "pre-existing exclude rules must survive"
+    );
+}
+
+// Reporting "Archived <name>" while moving nothing hid both typos and
+// old-layout notes that migrate could not place.
+#[test]
+fn wt_archive_unknown_workstream_errors() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "archive", "nope"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no workstream named 'nope'"));
+}
+
+#[test]
+fn wt_archive_old_layout_without_worktree_errors() {
+    let repo = TestRepo::new();
+    let old = seed_old_layout(&repo.root, "lonely", false);
+
+    repo.cmd()
+        .args(["wt", "archive", "lonely"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("old notes layout"));
+
+    assert!(old.is_dir(), "notes must not be silently left half-handled");
 }

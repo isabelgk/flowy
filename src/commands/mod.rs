@@ -1,3 +1,4 @@
+mod migrate;
 mod ticket;
 pub mod worktree;
 
@@ -14,6 +15,7 @@ pub fn dispatch(matches: ArgMatches) -> Result<()> {
         Some(("clone", sub)) => worktree::clone(sub),
         Some(("worktree", sub)) => worktree::dispatch(sub),
         Some(("ticket", sub)) => ticket::dispatch(sub),
+        Some(("migrate", sub)) => migrate::run(sub),
         Some(("tui", _)) | None => {
             let root = if let Some(p) = matches.get_one::<String>("repo-root") {
                 PathBuf::from(p)

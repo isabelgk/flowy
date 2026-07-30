@@ -11,7 +11,7 @@ use std::process::Command;
 use crate::core::{
     meta::read_meta,
     names::{safe_name, workstream_dir},
-    repo::{find_repo_root, notes_dir},
+    repo::{find_repo_root, worktrees_dir},
     ticket::{Status, Ticket, load_tickets, resolve_ticket, ticket_path},
 };
 use crate::output::print_json;
@@ -116,6 +116,27 @@ fn print_ticket_table(section: &str, tickets: &[Ticket]) {
     println!("{table}");
 }
 
+// Every live workstream, as (name, workstream dir), sorted by name. Enumerates
+// worktrees rather than the notes root because a workstream's notes now live
+// inside its worktree; archived ones are reachable only by explicit name.
+fn live_workstreams(root: &Path) -> Vec<(String, PathBuf)> {
+    let Ok(entries) = std::fs::read_dir(worktrees_dir(root)) else {
+        return Vec::new();
+    };
+    let mut dirs: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    dirs.sort();
+    dirs.into_iter()
+        .filter_map(|p| {
+            let name = p.file_name()?.to_str()?.to_string();
+            Some((name, crate::core::names::workstream_subdir(&p)))
+        })
+        .collect()
+}
+
 // Returns the worktree name if cwd is inside <root>/worktrees/<name>/.
 fn cwd_worktree(root: &std::path::Path) -> Option<String> {
     let cwd = std::env::current_dir().ok()?;
@@ -159,26 +180,12 @@ fn list(matches: &ArgMatches) -> Result<()> {
         print_ticket_table(&ws_name, &tickets);
     } else {
         // All workstreams grouped
-        let notes = notes_dir(&root);
         let mut groups: Vec<(String, Vec<Ticket>)> = Vec::new();
 
-        if let Ok(entries) = std::fs::read_dir(&notes) {
-            let mut dirs: Vec<PathBuf> = entries
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| p.is_dir())
-                .collect();
-            dirs.sort();
-
-            for dir in dirs {
-                let name = match dir.file_name().and_then(|n| n.to_str()) {
-                    Some(n) if n != "archive" => n.to_string(),
-                    _ => continue,
-                };
-                let tickets = filter_tickets(load_tickets(&dir).unwrap_or_default(), filter);
-                if !tickets.is_empty() {
-                    groups.push((name, tickets));
-                }
+        for (name, dir) in live_workstreams(&root) {
+            let tickets = filter_tickets(load_tickets(&dir).unwrap_or_default(), filter);
+            if !tickets.is_empty() {
+                groups.push((name, tickets));
             }
         }
 
@@ -478,28 +485,15 @@ fn collect_search_tickets(matches: &ArgMatches, root: &Path) -> Result<Vec<Searc
             .collect());
     }
 
-    let notes = notes_dir(root);
     let mut result = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&notes) {
-        let mut dirs: Vec<PathBuf> = entries
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.is_dir())
-            .collect();
-        dirs.sort();
-        for dir in dirs {
-            let name = match dir.file_name().and_then(|n| n.to_str()) {
-                Some(n) if n != "archive" => n.to_string(),
-                _ => continue,
-            };
-            for t in load_tickets(&dir).unwrap_or_default() {
-                result.push(SearchTicket {
-                    workstream: name.clone(),
-                    number: t.number,
-                    title: t.title,
-                    content: t.content,
-                });
-            }
+    for (name, dir) in live_workstreams(root) {
+        for t in load_tickets(&dir).unwrap_or_default() {
+            result.push(SearchTicket {
+                workstream: name.clone(),
+                number: t.number,
+                title: t.title,
+                content: t.content,
+            });
         }
     }
     Ok(result)

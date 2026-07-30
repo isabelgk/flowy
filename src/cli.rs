@@ -23,6 +23,7 @@ pub fn build() -> Command {
         .subcommand(clone_cmd())
         .subcommand(worktree_cmd())
         .subcommand(ticket_cmd())
+        .subcommand(migrate_cmd())
         .subcommand(tui_cmd())
         .subcommand(completions_cmd())
 }
@@ -178,6 +179,17 @@ fn ticket_cmd() -> Command {
             Command::new("status")
                 .visible_alias("st")
                 .about("Show workstream overview"),
+        )
+}
+
+fn migrate_cmd() -> Command {
+    Command::new("migrate")
+        .about("Move workstream notes from notes/workstreams/ into their worktrees")
+        .arg(
+            Arg::new("dry-run")
+                .long("dry-run")
+                .action(ArgAction::SetTrue)
+                .help("Report what would move without moving it"),
         )
 }
 

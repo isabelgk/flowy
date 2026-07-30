@@ -10,7 +10,7 @@ use crate::core::{
     cache::{Cache, WorktreeCache, load_cache, save_cache},
     meta::{Meta, WorktreeMeta, read_meta, write_meta},
     names::safe_name,
-    repo::{find_repo_root, notes_dir, worktrees_dir},
+    repo::{archive_root, ensure_local_excluded, find_repo_root, worktrees_dir},
     ticket::{Status, load_tickets},
 };
 use crate::output::print_json;
@@ -96,8 +96,8 @@ pub fn init(matches: &ArgMatches) -> Result<()> {
 
     std::fs::write(root.join(".git"), "gitdir: ./.bare\n").context("writing .git pointer")?;
     std::fs::create_dir_all(root.join("worktrees")).context("creating worktrees/")?;
-    std::fs::create_dir_all(root.join("notes").join("workstreams").join("archive"))
-        .context("creating notes/workstreams/archive/")?;
+    std::fs::create_dir_all(archive_root(&root)).context("creating notes/workstreams/archive/")?;
+    ensure_local_excluded(&root)?;
 
     let worktree_path = root.join("worktrees").join("main");
     let status = Command::new("git")
@@ -164,8 +164,8 @@ pub fn clone(matches: &ArgMatches) -> Result<()> {
     std::fs::write(root.join(".git"), "gitdir: ./.bare\n").context("writing .git pointer")?;
 
     std::fs::create_dir_all(root.join("worktrees")).context("creating worktrees/")?;
-    std::fs::create_dir_all(root.join("notes").join("workstreams").join("archive"))
-        .context("creating notes/workstreams/archive/")?;
+    std::fs::create_dir_all(archive_root(&root)).context("creating notes/workstreams/archive/")?;
+    ensure_local_excluded(&root)?;
 
     // Detect the default branch and scaffold its worktree and notes.
     let head_out = Command::new("git")
@@ -222,6 +222,9 @@ fn new(matches: &ArgMatches) -> Result<()> {
 
     let name = safe_name(branch);
     let worktree_path = worktrees_dir(&root).join(&name);
+
+    // Self-heal repos scaffolded before workstream notes moved into the worktree.
+    ensure_local_excluded(&root)?;
 
     let branch_exists = Command::new("git")
         .args(["rev-parse", "--verify", &format!("refs/heads/{branch}")])
@@ -288,7 +291,7 @@ pub fn list_worktrees(root: &Path) -> Result<Vec<WorktreeInfo>> {
         anyhow::bail!("git worktree list failed");
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let result = collect_worktree_info(&stdout, root, &mut cache);
+    let result = collect_worktree_info(&stdout, &mut cache);
     save_cache(root, &cache);
     Ok(result)
 }
@@ -389,14 +392,17 @@ fn parse_worktree_blocks(porcelain: &str) -> Vec<WorktreeBlock> {
     blocks
 }
 
-fn collect_worktree_info(porcelain: &str, root: &Path, cache: &mut Cache) -> Vec<WorktreeInfo> {
+fn collect_worktree_info(porcelain: &str, cache: &mut Cache) -> Vec<WorktreeInfo> {
     // Per-worktree status comes from separate `git` invocations (status, log);
     // running them concurrently avoids paying process-spawn latency N times over.
     let jobs: Vec<_> = parse_worktree_blocks(porcelain)
         .into_iter()
         .map(|b| {
             let name = safe_name(&b.branch);
-            let ws_dir = crate::core::names::workstream_dir(root, &name);
+            // Derived from the worktree's own path rather than rebuilt from the
+            // branch name, so a worktree dir that diverges from its safe-name
+            // still resolves.
+            let ws_dir = crate::core::names::workstream_subdir(&b.path);
             let old_entry = cache.worktrees.get(&name).cloned().unwrap_or_default();
             (name, b.path, b.branch, b.head_sha, ws_dir, old_entry)
         })
@@ -557,6 +563,18 @@ fn archive(matches: &ArgMatches) -> Result<()> {
 
     let worktree_path = worktrees_dir(&root).join(name);
 
+    // Reporting success while doing nothing hides a typo'd name, and hides
+    // old-layout notes that `flowy migrate` could not place.
+    if !worktree_path.exists() && !crate::core::names::workstream_dir(&root, name).exists() {
+        if root.join("notes").join("workstreams").join(name).is_dir() {
+            bail!(
+                "'{name}' still uses the old notes layout and has no worktree; \
+                 move notes/workstreams/{name} to notes/workstreams/archive/{name} by hand"
+            );
+        }
+        bail!("no workstream named '{name}' to archive");
+    }
+
     // Check dirty status; if dirty and not forced, prompt the user
     let mut needs_force = force;
     if !force && worktree_path.exists() && is_dirty(&worktree_path)? {
@@ -571,11 +589,11 @@ fn archive(matches: &ArgMatches) -> Result<()> {
         needs_force = true;
     }
 
-    // Move notes dir before removing worktree so partial failure leaves notes intact
+    // Move notes out before removing the worktree they live in, so a partial
+    // failure leaves them intact rather than deleted with the worktree.
     let ws_dir = crate::core::names::workstream_dir(&root, name);
-    let archive_dir = notes_dir(&root).join("archive").join(name);
-    std::fs::create_dir_all(notes_dir(&root).join("archive"))
-        .context("creating notes/workstreams/archive/")?;
+    let archive_dir = crate::core::names::archived_workstream_dir(&root, name);
+    std::fs::create_dir_all(archive_root(&root)).context("creating notes/workstreams/archive/")?;
 
     if ws_dir.exists() {
         std::fs::rename(&ws_dir, &archive_dir)
@@ -612,23 +630,15 @@ fn unarchive(matches: &ArgMatches) -> Result<()> {
     let json = matches.get_flag("json");
     let name = matches.get_one::<String>("name").unwrap();
 
-    let archive_dir = notes_dir(&root).join("archive").join(name);
+    let archive_dir = crate::core::names::archived_workstream_dir(&root, name);
     let meta = read_meta(&archive_dir)?;
 
     let branch = &meta.worktree.branch;
     let worktree_path = worktrees_dir(&root).join(name);
     let ws_dir = crate::core::names::workstream_dir(&root, name);
 
-    // Move notes first so that if worktree add fails we can roll back and leave
-    // the workstream cleanly in the archive.
-    std::fs::rename(&archive_dir, &ws_dir).with_context(|| {
-        format!(
-            "restoring {} from {}",
-            ws_dir.display(),
-            archive_dir.display()
-        )
-    })?;
-
+    // The worktree must exist before the notes can move into it, so create it
+    // first and unwind it if the move fails.
     // Branch already exists in the bare repo; no -b flag needed.
     let status = Command::new("git")
         .arg("worktree")
@@ -639,8 +649,33 @@ fn unarchive(matches: &ArgMatches) -> Result<()> {
         .status()
         .context("running git worktree add")?;
     if !status.success() {
-        let _ = std::fs::rename(&ws_dir, &archive_dir);
         bail!("git worktree add failed");
+    }
+
+    let restore = (|| -> Result<()> {
+        let parent = ws_dir
+            .parent()
+            .context("workstream dir has no parent")?
+            .to_path_buf();
+        std::fs::create_dir_all(&parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+        std::fs::rename(&archive_dir, &ws_dir).with_context(|| {
+            format!(
+                "restoring {} from {}",
+                ws_dir.display(),
+                archive_dir.display()
+            )
+        })
+    })();
+
+    if let Err(e) = restore {
+        // Leave the workstream cleanly archived rather than half-restored.
+        let _ = Command::new("git")
+            .args(["worktree", "remove", "--force"])
+            .arg(&worktree_path)
+            .current_dir(root.join(".bare"))
+            .status();
+        return Err(e);
     }
 
     if json {
@@ -661,8 +696,13 @@ fn rename(matches: &ArgMatches) -> Result<()> {
     let new_branch = matches.get_one::<String>("new-branch").unwrap();
     let new_name = safe_name(new_branch);
 
+    // Notes live inside the worktree, so an archived workstream has nothing to
+    // rename in place; it must be unarchived first.
     let old_ws_dir = crate::core::names::workstream_dir(&root, old_name);
     if !old_ws_dir.exists() {
+        if crate::core::names::archived_workstream_dir(&root, old_name).exists() {
+            bail!("workstream '{old_name}' is archived; unarchive it before renaming");
+        }
         bail!(
             "no workstream named '{old_name}' (looked in {})",
             old_ws_dir.display()
@@ -687,9 +727,6 @@ fn rename(matches: &ArgMatches) -> Result<()> {
     if renaming_dirs {
         if new_worktree.exists() {
             bail!("target worktree already exists: {}", new_worktree.display());
-        }
-        if new_ws_dir.exists() {
-            bail!("target notes dir already exists: {}", new_ws_dir.display());
         }
         // Renaming the dir out from under the shell's cwd breaks the move and
         // every `git -C` after it; refuse rather than half-move.
@@ -732,18 +769,7 @@ fn rename(matches: &ArgMatches) -> Result<()> {
         return Err(e);
     }
 
-    if renaming_dirs
-        && let Err(e) = std::fs::rename(&old_ws_dir, &new_ws_dir).with_context(|| {
-            format!(
-                "moving {} to {}",
-                old_ws_dir.display(),
-                new_ws_dir.display()
-            )
-        })
-    {
-        report_partial(moved_branch, &old_branch, new_branch, true);
-        return Err(e);
-    }
+    // Notes live inside the worktree, so move_worktree already carried them.
 
     let target_ws_dir = if renaming_dirs {
         &new_ws_dir
