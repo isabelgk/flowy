@@ -10,7 +10,7 @@ use crate::core::{
     cache::{Cache, WorktreeCache, load_cache, save_cache},
     meta::{Meta, WorktreeMeta, read_meta, write_meta},
     names::safe_name,
-    repo::{archive_root, find_repo_root, worktrees_dir},
+    repo::{archive_root, ensure_local_excluded, find_repo_root, worktrees_dir},
     ticket::{Status, load_tickets},
 };
 use crate::output::print_json;
@@ -97,6 +97,7 @@ pub fn init(matches: &ArgMatches) -> Result<()> {
     std::fs::write(root.join(".git"), "gitdir: ./.bare\n").context("writing .git pointer")?;
     std::fs::create_dir_all(root.join("worktrees")).context("creating worktrees/")?;
     std::fs::create_dir_all(archive_root(&root)).context("creating notes/workstreams/archive/")?;
+    ensure_local_excluded(&root)?;
 
     let worktree_path = root.join("worktrees").join("main");
     let status = Command::new("git")
@@ -164,6 +165,7 @@ pub fn clone(matches: &ArgMatches) -> Result<()> {
 
     std::fs::create_dir_all(root.join("worktrees")).context("creating worktrees/")?;
     std::fs::create_dir_all(archive_root(&root)).context("creating notes/workstreams/archive/")?;
+    ensure_local_excluded(&root)?;
 
     // Detect the default branch and scaffold its worktree and notes.
     let head_out = Command::new("git")
@@ -220,6 +222,9 @@ fn new(matches: &ArgMatches) -> Result<()> {
 
     let name = safe_name(branch);
     let worktree_path = worktrees_dir(&root).join(&name);
+
+    // Self-heal repos scaffolded before workstream notes moved into the worktree.
+    ensure_local_excluded(&root)?;
 
     let branch_exists = Command::new("git")
         .args(["rev-parse", "--verify", &format!("refs/heads/{branch}")])

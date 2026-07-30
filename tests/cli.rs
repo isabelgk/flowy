@@ -162,6 +162,36 @@ fn wt_ls_json_correct_ticket_counts() {
     assert_eq!(entry["tickets_total"], 1);
 }
 
+// Workstream notes live inside the working tree, so without an exclude entry
+// every worktree reads as dirty and `git worktree remove` refuses. Asserted
+// with core.excludesFile disabled so a developer's global ignore cannot mask a
+// regression here.
+#[test]
+fn workstream_dir_is_excluded_from_git_status() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "test/branch"])
+        .assert()
+        .success();
+
+    let worktree = repo.root.join("worktrees").join("test-branch");
+    assert!(repo.ws_dir("test-branch").join("meta.toml").exists());
+
+    let status = git_out(
+        &worktree,
+        &[
+            "-c",
+            "core.excludesFile=",
+            "status",
+            "--porcelain",
+            "--untracked-files=normal",
+        ],
+    );
+    assert_eq!(status, "", "workstream dir must not show as untracked");
+}
+
+// Archiving without --force must not trip the dirty check on the workstream
+// dir the worktree now contains; an unignored .local/ would make it prompt.
 #[test]
 fn wt_archive_removes_worktree_and_moves_notes() {
     let repo = TestRepo::new();
@@ -1253,4 +1283,126 @@ fn wt_rename_refuses_from_inside_worktree() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("outside the worktree"));
+}
+
+// Hand-build the pre-move layout: notes at <root>/notes/workstreams/<name>/
+// beside an existing worktree.
+fn seed_old_layout(root: &std::path::Path, name: &str, with_worktree: bool) -> std::path::PathBuf {
+    let old = root.join("notes").join("workstreams").join(name);
+    fs::create_dir_all(old.join("tickets")).unwrap();
+    fs::write(
+        old.join("tickets").join("001.md"),
+        "+++\ntitle = \"legacy\"\nstatus = \"pending\"\n+++\nbody\n",
+    )
+    .unwrap();
+    fs::write(
+        old.join("meta.toml"),
+        format!("created = \"x\"\n[worktree]\npath = \"p\"\nbranch = \"{name}\"\n"),
+    )
+    .unwrap();
+    if with_worktree {
+        git_in(
+            &root.join(".bare"),
+            &[
+                "worktree",
+                "add",
+                root.join("worktrees").join(name).to_str().unwrap(),
+                "-b",
+                name,
+            ],
+        );
+    }
+    old
+}
+
+#[test]
+fn migrate_moves_notes_into_worktree() {
+    let repo = TestRepo::new();
+    let old = seed_old_layout(&repo.root, "legacy", true);
+
+    repo.cmd().arg("migrate").assert().success();
+
+    assert!(!old.exists(), "old notes dir should be gone");
+    assert!(
+        repo.ticket("legacy", 1).exists(),
+        "ticket should land inside the worktree"
+    );
+    assert_eq!(
+        read_meta(&repo.ws_dir("legacy")).worktree.branch,
+        "legacy",
+        "meta should move intact"
+    );
+
+    // The migrated workstream is now visible to the normal commands.
+    let output = repo
+        .cmd()
+        .args(["t", "list", "-w", "legacy", "--json"])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json.as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn migrate_dry_run_moves_nothing() {
+    let repo = TestRepo::new();
+    let old = seed_old_layout(&repo.root, "legacy", true);
+
+    repo.cmd()
+        .args(["migrate", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("would move legacy"));
+
+    assert!(old.is_dir(), "dry run must leave the old dir in place");
+    assert!(!repo.ws_dir("legacy").exists());
+}
+
+#[test]
+fn migrate_reports_notes_without_a_worktree() {
+    let repo = TestRepo::new();
+    let old = seed_old_layout(&repo.root, "orphan", false);
+
+    repo.cmd()
+        .arg("migrate")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("orphaned orphan"));
+
+    assert!(old.is_dir(), "orphaned notes must be left alone");
+}
+
+#[test]
+fn migrate_leaves_archive_alone_and_is_idempotent() {
+    let repo = TestRepo::new();
+    seed_old_layout(&repo.root, "legacy", true);
+    let archived = archived_ws_dir_in(&repo.root, "old-thing");
+    fs::create_dir_all(&archived).unwrap();
+
+    repo.cmd().arg("migrate").assert().success();
+    assert!(archived.is_dir(), "archive entries must not be migrated");
+
+    // Second run has nothing left to do and must not fail.
+    repo.cmd()
+        .arg("migrate")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Nothing to migrate"));
+    assert!(repo.ticket("legacy", 1).exists());
+}
+
+#[test]
+fn migrate_adds_the_exclude_entry() {
+    let repo = TestRepo::new();
+    let exclude = repo.root.join(".bare").join("info").join("exclude");
+    fs::write(&exclude, "# pre-existing\n*.tmp\n").unwrap();
+
+    repo.cmd().arg("migrate").assert().success();
+
+    let content = fs::read_to_string(&exclude).unwrap();
+    assert!(content.contains(".local/"), "exclude entry should be added");
+    assert!(
+        content.contains("*.tmp"),
+        "pre-existing exclude rules must survive"
+    );
 }

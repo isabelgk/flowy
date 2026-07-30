@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::core::{
     names::workstream_dir,
-    repo::{find_repo_root, worktrees_dir},
+    repo::{ensure_local_excluded, find_repo_root, worktrees_dir},
 };
 use crate::output::print_json;
 
@@ -62,6 +62,11 @@ pub fn run(matches: &ArgMatches) -> Result<()> {
     let root = get_repo_root(matches)?;
     let json = matches.get_flag("json");
     let dry_run = matches.get_flag("dry-run");
+
+    // Repos scaffolded before the move have no exclude entry for .local/.
+    if !dry_run {
+        ensure_local_excluded(&root)?;
+    }
 
     let mut results: Vec<(String, Outcome, PathBuf)> = Vec::new();
 
