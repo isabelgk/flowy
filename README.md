@@ -8,13 +8,24 @@ markdown ticket files.
 ```
 project/
   .bare/                              # bare git repository
+  .flowy/cache.json                   # per-worktree status cache
   worktrees/<safe-name>/              # per-branch worktrees (/ replaced with -)
-  notes/workstreams/<safe-name>/
-    meta.toml                         # branch + worktree path
-    tickets/
-      001.md                          # TOML frontmatter encodes status
-  notes/workstreams/archive/<name>/   # archived workstreams
+    .local/workstream/                # workstream state, colocated with the code
+      meta.toml                       # branch + worktree path
+      status.md                       # append-only activity log
+      tickets/
+        001.md                        # TOML frontmatter encodes status
+  notes/workstreams/archive/<name>/   # archived workstreams, same shape
 ```
+
+A workstream's notes live inside the worktree they describe, so `cd`-ing into a
+worktree gives you its tickets too. Archived workstreams are the exception:
+`wt archive` removes the worktree, so their notes move up to
+`notes/workstreams/archive/` to outlive it.
+
+`.local/` is added to the repo's `.bare/info/exclude` during scaffolding.
+Without it every worktree would report dirty and `git worktree remove` would
+refuse; the entry is local to your clone and never committed.
 
 Ticket metadata lives in TOML frontmatter (`+++` delimiters) with `title` and
 `status` fields. Status values: `"pending"`, `"complete"`, `"wont-implement"`.
@@ -43,16 +54,17 @@ Manage bare git worktrees.
 
 | Subcommand | Alias | Description |
 |------------|-------|-------------|
-| `new` | `n` | Add a new worktree and notes directory |
+| `new` | `n` | Add a new worktree and its workstream directory |
 | `ls` | | List worktrees with status, ticket counts, and branch age |
 | `archive` | `ar` | Archive a workstream and remove its worktree |
 | `unarchive` | `un` | Restore an archived workstream |
-| `rename` | `mv` | Rename a workstream: branch, worktree dir, notes dir, and meta |
+| `rename` | `mv` | Rename a workstream: branch, worktree dir, and meta |
 
-`rename <old-name> <new-branch>` renames the git branch, moves both the
-worktree and notes directories to the new safe-name, and updates `meta.toml`.
-Worktrees containing submodules (which `git worktree move` refuses) are moved
-manually and their admin pointers repaired.
+`rename <old-name> <new-branch>` renames the git branch, moves the worktree to
+the new safe-name, and updates `meta.toml`. Notes travel with the worktree
+because they live inside it. Worktrees containing submodules (which `git
+worktree move` refuses) are moved manually and their admin pointers repaired.
+An archived workstream must be unarchived before it can be renamed.
 
 ### `flowy ticket` (alias: `t`)
 
@@ -70,6 +82,13 @@ Manage markdown tickets. Workstream defaults to the current git branch.
 | `status` | `st` | Show workstream overview |
 
 Use `-w / --workstream <NAME>` to target a workstream other than the current branch.
+
+### `flowy migrate`
+
+Move workstream notes from the old `notes/workstreams/<name>/` layout into
+`<worktree>/.local/workstream/`. Run once per repo scaffolded before notes moved
+into the worktree. The archive is left alone, and notes whose worktree no longer
+exists are reported rather than moved. `--dry-run` reports without moving.
 
 ### `flowy tui`
 
