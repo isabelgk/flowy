@@ -1406,3 +1406,29 @@ fn migrate_adds_the_exclude_entry() {
         "pre-existing exclude rules must survive"
     );
 }
+
+// Reporting "Archived <name>" while moving nothing hid both typos and
+// old-layout notes that migrate could not place.
+#[test]
+fn wt_archive_unknown_workstream_errors() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "archive", "nope"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no workstream named 'nope'"));
+}
+
+#[test]
+fn wt_archive_old_layout_without_worktree_errors() {
+    let repo = TestRepo::new();
+    let old = seed_old_layout(&repo.root, "lonely", false);
+
+    repo.cmd()
+        .args(["wt", "archive", "lonely"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("old notes layout"));
+
+    assert!(old.is_dir(), "notes must not be silently left half-handled");
+}

@@ -563,6 +563,18 @@ fn archive(matches: &ArgMatches) -> Result<()> {
 
     let worktree_path = worktrees_dir(&root).join(name);
 
+    // Reporting success while doing nothing hides a typo'd name, and hides
+    // old-layout notes that `flowy migrate` could not place.
+    if !worktree_path.exists() && !crate::core::names::workstream_dir(&root, name).exists() {
+        if root.join("notes").join("workstreams").join(name).is_dir() {
+            bail!(
+                "'{name}' still uses the old notes layout and has no worktree; \
+                 move notes/workstreams/{name} to notes/workstreams/archive/{name} by hand"
+            );
+        }
+        bail!("no workstream named '{name}' to archive");
+    }
+
     // Check dirty status; if dirty and not forced, prompt the user
     let mut needs_force = force;
     if !force && worktree_path.exists() && is_dirty(&worktree_path)? {

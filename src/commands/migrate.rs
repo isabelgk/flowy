@@ -118,10 +118,14 @@ pub fn run(matches: &ArgMatches) -> Result<()> {
         match outcome {
             Outcome::Moved => println!("{prefix} {name} -> {}", path.display()),
             Outcome::Skipped => println!("skipped {name} (already at {})", path.display()),
+            // `wt archive` cannot help here: it moves notes out of a worktree,
+            // and there is no worktree. Name the destination instead.
             Outcome::Orphaned => println!(
-                "orphaned {name}: no worktree at {}; archive it or move {} by hand",
+                "orphaned {name}: no worktree at {}\n  \
+                 move {} to {} by hand, or recreate the worktree and re-run migrate",
                 worktrees_dir(&root).join(name).display(),
-                path.display()
+                path.display(),
+                crate::core::names::archived_workstream_dir(&root, name).display()
             ),
         }
     }
