@@ -113,9 +113,12 @@ implementation, and archiving on completion. Install it by copying it into your
 skills directory:
 
 ```sh
-cp -r skills/flowy ~/.claude/skills/          # available everywhere
-cp -r skills/flowy /path/to/project/.claude/skills/   # one project only
+just skill-link      # symlink into ~/.claude/skills; edits here take effect at once
+just skill-install   # copy into ~/.claude/skills, pinned against further edits
 ```
+
+Both overwrite whatever is already at `~/.claude/skills/flowy`. To scope the
+skill to one project instead, copy it into that project's `.claude/skills/`.
 
 It exposes six verbs, and also triggers on the equivalent plain-language
 request:
