@@ -32,6 +32,22 @@ pub fn git_out(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// Live workstream dir under an arbitrary project root, for tests that scaffold
+/// a project themselves (clone, init) rather than using TestRepo.
+pub fn ws_dir_in(root: &Path, name: &str) -> PathBuf {
+    root.join("worktrees")
+        .join(name)
+        .join(".local")
+        .join("workstream")
+}
+
+pub fn archived_ws_dir_in(root: &Path, name: &str) -> PathBuf {
+    root.join("notes")
+        .join("workstreams")
+        .join("archive")
+        .join(name)
+}
+
 pub struct TestRepo {
     // Keep TempDir alive for the duration of the test.
     _dir: TempDir,
@@ -75,6 +91,22 @@ impl TestRepo {
         std::fs::create_dir_all(root.join("notes").join("workstreams").join("archive")).unwrap();
 
         TestRepo { _dir: dir, root }
+    }
+
+    /// Live workstream dir for `name`. Routed through a helper so a future
+    /// layout change is one edit rather than one per assertion.
+    pub fn ws_dir(&self, name: &str) -> PathBuf {
+        ws_dir_in(&self.root, name)
+    }
+
+    pub fn archived_ws_dir(&self, name: &str) -> PathBuf {
+        archived_ws_dir_in(&self.root, name)
+    }
+
+    pub fn ticket(&self, name: &str, number: u32) -> PathBuf {
+        self.ws_dir(name)
+            .join("tickets")
+            .join(format!("{number:03}.md"))
     }
 
     pub fn cmd(&self) -> Command {
