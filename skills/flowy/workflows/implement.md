@@ -78,8 +78,9 @@ Everything after the verb: `<workstream-name> [ticket-number]`
      reviewable, and say so in the journal.
    - **Write it down, not up.** For a finding nothing can currently reach (dead
      until another ticket lands, or true only of code no fixture exercises), a
-     note in `notes/knowledge/` costs less than a queue entry and is not lost.
-     Name it in the journal so it is findable.
+     note under `<repo_root>/notes/knowledge/` costs less than a queue entry and
+     is not lost. Create the directory if it does not exist. Name the note in
+     the journal so it is findable.
    - **File a ticket** only when one of these holds: it needs a decision that is
      the user's (especially anything that changes shipping behaviour rather than
      the work at hand); it is genuinely a separate chunk of work; or it is a

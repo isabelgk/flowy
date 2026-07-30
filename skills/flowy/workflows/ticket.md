@@ -55,33 +55,9 @@ from context below.
    **Title** - an imperative verb phrase, matching the verb choice and
    granularity of sibling tickets.
 
-   **Description** - markdown with section headers and bullet lists. Keep each
-   section short; omit any that adds no information:
-
-   ```markdown
-   ## Scope
-   One or two sentences: what to do and why. Answer "what problem does this solve?"
-
-   ## Affected files
-   - path/to/file.ts
-   - another/file.cpp
-
-   ## Acceptance criteria
-   - Specific, observable outcome 1.
-   - Specific, observable outcome 2.
-
-   ## Related tickets
-   - 003: dependency or follow-on (only if it falls out naturally; omit if none)
-   ```
-
-   - **Scope** is always present and always includes a one-line motivation.
-   - **Affected files** is a bullet list; omit the section entirely if unknown.
-   - **Acceptance criteria** are outcomes that can be verified, not vague
-     intentions. `next` and `implement` both read these, so a criterion that
-     cannot be checked leaves the ticket impossible to close honestly.
-   - **Related tickets** only if a dependency or follow-on is obvious from
-     context. Never manufacture links - `next` derives ordering from this
-     section, so a fabricated one distorts the queue.
+   **Description** - the shared ticket description format: `## Scope`,
+   `## Affected files`, `## Acceptance criteria`, and optionally
+   `## Related tickets`, per the rules already in SKILL.md.
 
 5. **Create the ticket** with a heredoc so newlines survive:
 

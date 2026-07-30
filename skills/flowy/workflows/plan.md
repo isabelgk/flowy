@@ -64,7 +64,8 @@ not inside a worktree, list `<repo_root>/worktrees/` and ask.
    it numbers new tickets after the current highest - do not renumber existing
    ones.
 
-   For the description format, follow the template in `ticket.md`.
+   The description uses the shared ticket description format from SKILL.md,
+   plus the measurements from step 4.
 
 6. **Update status.** Append to `<ws_dir>/status.md`:
    `[<current date and time>] Planning complete. <N> tickets created.`

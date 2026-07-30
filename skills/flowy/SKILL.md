@@ -110,11 +110,40 @@ Write `planning.md`, `next.md`, and `audit.md` directly - those have no CLI.
 
 **Read with `--json`.** `flowy --json ticket show -w <ws> <n>` and
 `flowy ticket list -w <ws> --status pending --json` are the parseable forms.
-Note `--json` is global, so it goes before the subcommand on `show`.
+`--json` and `--repo-root` are global, so either position parses.
 
 **Target explicitly.** `-w <name>` selects a workstream other than the current
 branch's. Archived workstreams are reachable *only* by explicit `-w`; they
 never appear in an enumeration of `worktrees/`.
+
+**One ticket description format.** `plan` and `ticket` both write it and `next`
+parses ordering out of it, so it is shared rather than per-workflow. Keep each
+section short; omit any that adds no information:
+
+```markdown
+## Scope
+One or two sentences: what to do and why. Answer "what problem does this solve?"
+
+## Affected files
+- path/to/file.ts
+- another/file.cpp
+
+## Acceptance criteria
+- Specific, observable outcome 1.
+- Specific, observable outcome 2.
+
+## Related tickets
+- 003: dependency or follow-on (only if it falls out naturally; omit if none)
+```
+
+- **Scope** is always present and always includes a one-line motivation.
+- **Affected files** is a bullet list; omit the section entirely if unknown.
+- **Acceptance criteria** are outcomes that can be verified, not vague
+  intentions. A criterion that cannot be checked leaves the ticket impossible to
+  close honestly.
+- **Related tickets** only if a dependency or follow-on is obvious from context.
+  Never manufacture links - `next` derives ordering from this section, so a
+  fabricated one distorts the queue.
 
 **Watch for generators.** A *generator* is a defect that will keep producing
 findings until it is fixed: a duplicated implementation where a change has to
