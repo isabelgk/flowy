@@ -92,13 +92,38 @@ Everything after the verb: `<workstream-name> [ticket-number]`
    which of the three above you think it is and why fixing it in place is not the
    better call.
 
-8. **Report implementation complete and ask the user to test.** Summarize what
-   was built and list the commits. State explicitly how each incidental finding
-   was disposed of per step 7. Anything genuinely deferred or left unimplemented
-   must be named rather than mentioned in passing, with a recommendation for how
-   to resolve it - do not resolve a question that is the user's to answer on your
-   own judgment. Ask the user to test and confirm the work is correct before
-   marking the ticket done. Do **not** run `flowy ticket done` yet.
+8. **Report implementation complete and ask the user to test.** The ticket's
+   journal already holds the detail; this message exists only to get the user to
+   the decisions that are theirs. Keep it to three parts:
+
+   ~~~
+   Implemented <ticket>: <one or two sentences on what was built>.
+
+   Commits:
+   - <hash> <subject>
+
+   Needs your call:
+   1. <question> - <option A> or <option B>. Recommend <A>: <one-line reason>.
+   ~~~
+
+   Rules for the last part:
+
+   - List only questions that genuinely need the user's answer and could not be
+     settled during implementation: a choice that changes shipping behaviour, an
+     acceptance criterion the current code contradicts, something left
+     unimplemented. Anything filed as a ticket was already agreed in step 7 and
+     is not a question here.
+   - Every question gets a recommendation. Recommend, then wait - do not resolve
+     a question that is the user's to answer, and do not act on your own
+     recommendation before they answer.
+   - If nothing needs an answer, say so in one line and stop. Do not manufacture
+     a question to fill the section.
+
+   Do not restate the ticket description, walk through each file changed, or
+   narrate incidental findings you already fixed.
+
+   Ask the user to test and confirm the work is correct before marking the
+   ticket done. Do **not** run `flowy ticket done` yet.
 
 9. **On user confirmation**, mark it done:
 
