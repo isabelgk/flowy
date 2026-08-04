@@ -35,7 +35,7 @@ a worktree, list `<repo_root>/worktrees/` and ask.
    ```
 
 4. **Append a closing entry** to `<ws_dir>/status.md`:
-   `[<current date and time>] Workstream closed.`
+   `- <current date and time>: Workstream closed.`
 
    Both this and `audit.md` have to be written *before* the archive step -
    afterward the worktree is gone and `ws_dir` no longer exists.

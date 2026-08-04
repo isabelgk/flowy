@@ -68,7 +68,7 @@ not inside a worktree, list `<repo_root>/worktrees/` and ask.
    plus the measurements from step 4.
 
 6. **Update status.** Append to `<ws_dir>/status.md`:
-   `[<current date and time>] Planning complete. <N> tickets created.`
+   `- <current date and time>: Planning complete. <N> tickets created.`
 
 7. **Report** the plan path, the tickets written, and a brief summary. Say what
    was measured versus inferred, and name anything the measurements
