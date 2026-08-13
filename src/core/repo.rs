@@ -23,6 +23,24 @@ pub fn worktrees_dir(root: &Path) -> PathBuf {
     root.join("worktrees")
 }
 
+// The worktree directory cwd sits inside, if any. A workstream is keyed by its
+// directory name, not by the checked-out branch: `git branch -m` moves the branch
+// out from under the directory, and rebuilding the path from the branch then
+// points at a directory that does not exist.
+pub fn cwd_worktree(root: &Path) -> Option<String> {
+    let cwd = std::env::current_dir().ok()?;
+    let worktrees = worktrees_dir(root);
+    // Resolve both sides: current_dir() is always physical, while --repo-root may
+    // arrive relative or by way of a symlink (macOS /tmp, /var/folders).
+    let cwd = cwd.canonicalize().unwrap_or(cwd);
+    let worktrees = worktrees.canonicalize().unwrap_or(worktrees);
+    let rel = cwd.strip_prefix(&worktrees).ok()?;
+    rel.components()
+        .next()
+        .and_then(|c| c.as_os_str().to_str())
+        .map(|s| s.to_string())
+}
+
 // Workstream state lives at <worktree>/.local/workstream, inside the working
 // tree, so git must be told to ignore it or every worktree reads as dirty and
 // `git worktree remove` refuses without --force. info/exclude covers all

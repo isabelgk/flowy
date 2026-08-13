@@ -1432,3 +1432,102 @@ fn wt_archive_old_layout_without_worktree_errors() {
 
     assert!(old.is_dir(), "notes must not be silently left half-handled");
 }
+
+// A branch renamed with plain `git branch -m` leaves the worktree directory
+// keeping its original name. Everything below asserts flowy follows the
+// directory, which is what actually holds the notes.
+fn repo_with_renamed_branch() -> TestRepo {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat/foo"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["t", "add", "-w", "feat-foo", "First"])
+        .assert()
+        .success();
+    git_in(
+        &repo.root.join("worktrees").join("feat-foo"),
+        &["branch", "-m", "feat/bar"],
+    );
+    repo
+}
+
+#[test]
+fn t_list_follows_the_worktree_dir_when_the_branch_is_renamed() {
+    let repo = repo_with_renamed_branch();
+
+    let output = repo
+        .cmd()
+        .args(["t", "list", "--json"])
+        .current_dir(repo.root.join("worktrees").join("feat-foo"))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let arr = json.as_array().expect("JSON array");
+    assert_eq!(arr.len(), 1, "the workstream's own ticket must be listed");
+    assert_eq!(arr[0]["title"], "First");
+}
+
+#[test]
+fn t_status_counts_tickets_when_the_branch_is_renamed() {
+    let repo = repo_with_renamed_branch();
+
+    let output = repo
+        .cmd()
+        .args(["t", "status", "--json"])
+        .current_dir(repo.root.join("worktrees").join("feat-foo"))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["workstream"], "feat-foo");
+    assert_eq!(json["pending"], 1);
+    assert_eq!(json["total"], 1);
+}
+
+#[test]
+fn t_add_writes_into_the_worktree_when_the_branch_is_renamed() {
+    let repo = repo_with_renamed_branch();
+
+    repo.cmd()
+        .args(["t", "add", "Second"])
+        .current_dir(repo.root.join("worktrees").join("feat-foo"))
+        .assert()
+        .success();
+
+    assert!(repo.ticket("feat-foo", 2).exists());
+    // A branch-derived path would scaffold a directory that is not a worktree,
+    // stranding tickets where nothing reads them.
+    assert!(
+        !repo.root.join("worktrees").join("feat-bar").exists(),
+        "must not create a phantom worktree dir named after the branch"
+    );
+}
+
+#[test]
+fn wt_ls_json_names_the_worktree_dir_not_the_branch() {
+    let repo = repo_with_renamed_branch();
+
+    let output = repo.cmd().args(["wt", "ls", "--json"]).output().unwrap();
+    assert!(output.status.success());
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let arr = json.as_array().expect("JSON array");
+    let entry = arr
+        .iter()
+        .find(|e| e["name"] == "feat-foo")
+        .expect("entry keyed by the worktree dir name");
+    assert_eq!(entry["branch"], "feat/bar");
+    assert_eq!(entry["tickets_pending"], 1);
+    // wt archive / wt rename key on this name, so it must name a real directory.
+    assert!(
+        repo.root
+            .join("worktrees")
+            .join(entry["name"].as_str().unwrap())
+            .is_dir()
+    );
+}

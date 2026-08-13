@@ -11,7 +11,7 @@ use std::process::Command;
 use crate::core::{
     meta::read_meta,
     names::{safe_name, workstream_dir},
-    repo::{find_repo_root, worktrees_dir},
+    repo::{cwd_worktree, find_repo_root, worktrees_dir},
     ticket::{Status, Ticket, load_tickets, resolve_ticket, ticket_path},
 };
 use crate::output::print_json;
@@ -38,10 +38,15 @@ fn get_repo_root(matches: &ArgMatches) -> Result<PathBuf> {
     }
 }
 
-// Resolve workstream name from -w flag or current git branch.
+// Resolve workstream name from -w flag, the worktree cwd sits in, or the current
+// git branch. The cwd takes precedence over the branch because a renamed branch
+// no longer names its own worktree directory, and the branch-derived path would
+// point at a directory that does not exist.
 fn resolve_workstream(matches: &ArgMatches, root: &Path) -> Result<(String, PathBuf)> {
     let name = if let Some(n) = matches.get_one::<String>("workstream") {
         safe_name(n)
+    } else if let Some(name) = cwd_worktree(root) {
+        name
     } else {
         let out = Command::new("git")
             .args(["branch", "--show-current"])
@@ -135,16 +140,6 @@ fn live_workstreams(root: &Path) -> Vec<(String, PathBuf)> {
             Some((name, crate::core::names::workstream_subdir(&p)))
         })
         .collect()
-}
-
-// Returns the worktree name if cwd is inside <root>/worktrees/<name>/.
-fn cwd_worktree(root: &std::path::Path) -> Option<String> {
-    let cwd = std::env::current_dir().ok()?;
-    let rel = cwd.strip_prefix(root.join("worktrees")).ok()?;
-    rel.components()
-        .next()
-        .and_then(|c| c.as_os_str().to_str())
-        .map(|s| s.to_string())
 }
 
 fn list(matches: &ArgMatches) -> Result<()> {

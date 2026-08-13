@@ -273,6 +273,9 @@ fn new(matches: &ArgMatches) -> Result<()> {
 #[derive(Debug, serde::Serialize)]
 pub struct WorktreeInfo {
     pub name: String,
+    // The worktree's own path, so consumers resolve notes from where they
+    // actually live instead of rebuilding the path from the branch name.
+    pub path: PathBuf,
     pub branch: String,
     pub dirty: bool,
     pub age_seconds: i64,
@@ -398,10 +401,15 @@ fn collect_worktree_info(porcelain: &str, cache: &mut Cache) -> Vec<WorktreeInfo
     let jobs: Vec<_> = parse_worktree_blocks(porcelain)
         .into_iter()
         .map(|b| {
-            let name = safe_name(&b.branch);
-            // Derived from the worktree's own path rather than rebuilt from the
-            // branch name, so a worktree dir that diverges from its safe-name
-            // still resolves.
+            // The directory name is the workstream's identity (`wt archive`,
+            // `wt rename` and the notes path all key on it); the branch can be
+            // renamed out from under it.
+            let name = b
+                .path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| safe_name(&b.branch));
             let ws_dir = crate::core::names::workstream_subdir(&b.path);
             let old_entry = cache.worktrees.get(&name).cloned().unwrap_or_default();
             (name, b.path, b.branch, b.head_sha, ws_dir, old_entry)
@@ -470,6 +478,7 @@ fn compute_worktree_entry(
 
     let info = WorktreeInfo {
         name: name.clone(),
+        path,
         branch,
         dirty,
         age_seconds,

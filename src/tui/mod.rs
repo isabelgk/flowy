@@ -13,7 +13,8 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::commands::worktree::{WorktreeInfo, list_worktrees};
 use crate::core::{
-    names::{safe_name, workstream_dir},
+    names::{workstream_dir, workstream_subdir},
+    repo::cwd_worktree,
     ticket::{Status, load_tickets, ticket_path},
 };
 
@@ -94,23 +95,9 @@ impl App {
         results.into_iter().map(|(i, _)| i).collect()
     }
 
-    fn load_tickets_for_workstream(&mut self, name: &str) {
-        let ws_dir = workstream_dir(&self.root, name);
+    fn load_tickets_for_workstream(&mut self, name: &str, ws_dir: &Path) {
         self.active_workstream = name.to_string();
-        self.tickets = load_tickets(&ws_dir)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|t| {
-                let path = ticket_path(&ws_dir, t.number);
-                TuiTicket {
-                    number: t.number,
-                    title: t.title,
-                    status: t.status,
-                    content: t.content,
-                    path,
-                }
-            })
-            .collect();
+        self.tickets = load_tui_tickets(ws_dir);
         self.ticket_selected = 0;
         self.query.clear();
         self.ticket_offset = 0;
@@ -120,7 +107,7 @@ impl App {
     fn update_worktree_preview(&mut self) {
         self.worktree_preview.clear();
         if let Some(wt) = self.worktree_list().get(self.worktree_selected) {
-            let ws_dir = workstream_dir(&self.root, &wt.name);
+            let ws_dir = workstream_subdir(&wt.path);
             if let Ok(tickets) = load_tickets(&ws_dir) {
                 self.worktree_preview = tickets
                     .into_iter()
@@ -278,7 +265,8 @@ impl App {
             KeyCode::Enter => {
                 if let Some(wt) = self.worktree_list().get(self.worktree_selected) {
                     let name = wt.name.clone();
-                    self.load_tickets_for_workstream(&name);
+                    let ws_dir = workstream_subdir(&wt.path);
+                    self.load_tickets_for_workstream(&name, &ws_dir);
                     self.view = View::Tickets;
                 }
             }
@@ -330,40 +318,34 @@ fn write_ticket_status(path: &Path, new_status: &Status) -> Result<()> {
     Ok(())
 }
 
-pub fn run(root: &Path) -> Result<()> {
-    let branch_out = Command::new("git")
-        .args(["branch", "--show-current"])
-        .output()
-        .ok();
-
-    let (initial_view, active_workstream) = match branch_out {
-        Some(out) if out.status.success() => {
-            let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if branch.is_empty() {
-                (View::Worktrees, String::new())
-            } else {
-                (View::Tickets, safe_name(&branch))
+fn load_tui_tickets(ws_dir: &Path) -> Vec<TuiTicket> {
+    load_tickets(ws_dir)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|t| {
+            let path = ticket_path(ws_dir, t.number);
+            TuiTicket {
+                number: t.number,
+                title: t.title,
+                status: t.status,
+                content: t.content,
+                path,
             }
-        }
-        _ => (View::Worktrees, String::new()),
+        })
+        .collect()
+}
+
+pub fn run(root: &Path) -> Result<()> {
+    // Open on the workstream whose worktree we are standing in. Keyed on the
+    // directory rather than the checked-out branch: `git branch -m` leaves the
+    // two disagreeing, and a branch-derived path finds no tickets.
+    let (initial_view, active_workstream) = match cwd_worktree(root) {
+        Some(name) => (View::Tickets, name),
+        None => (View::Worktrees, String::new()),
     };
 
     let tickets = if initial_view == View::Tickets {
-        let ws_dir = workstream_dir(root, &active_workstream);
-        load_tickets(&ws_dir)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|t| {
-                let path = ticket_path(&ws_dir, t.number);
-                TuiTicket {
-                    number: t.number,
-                    title: t.title,
-                    status: t.status,
-                    content: t.content,
-                    path,
-                }
-            })
-            .collect()
+        load_tui_tickets(&workstream_dir(root, &active_workstream))
     } else {
         Vec::new()
     };
@@ -475,6 +457,60 @@ mod tests {
 
     fn ctrl(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    /// A worktree whose notes are reachable only through its own path: the branch
+    /// disagrees with the directory name, and the directory sits outside
+    /// worktrees/, so no name the TUI holds can rebuild the path. Both `git
+    /// branch -m` and `git worktree add <anywhere>` produce this shape.
+    fn app_with_divergent_worktree() -> (tempfile::TempDir, App) {
+        let dir = tempfile::tempdir().unwrap();
+        let worktree = dir.path().join("checkouts").join("feat-foo");
+        let tickets_dir = workstream_subdir(&worktree).join("tickets");
+        std::fs::create_dir_all(&tickets_dir).unwrap();
+        std::fs::write(
+            tickets_dir.join("001.md"),
+            "+++\nstatus = \"pending\"\ntitle = \"only ticket\"\n+++\n",
+        )
+        .unwrap();
+
+        let mut app = app_with_tickets(0);
+        app.root = dir.path().to_path_buf();
+        app.view = View::Worktrees;
+        app.active_workstream = String::new();
+        app.worktrees = Some(vec![WorktreeInfo {
+            name: "feat-foo".to_string(),
+            path: worktree,
+            branch: "feat/bar".to_string(),
+            dirty: false,
+            age_seconds: 0,
+            tickets_pending: 1,
+            tickets_total: 1,
+        }]);
+        (dir, app)
+    }
+
+    #[test]
+    fn worktree_preview_loads_when_the_branch_diverges_from_the_dir() {
+        let (_dir, mut app) = app_with_divergent_worktree();
+        assert!(
+            !workstream_dir(&app.root, "feat-foo").exists(),
+            "fixture must be unreachable by name for this test to mean anything"
+        );
+
+        app.update_worktree_preview();
+        assert_eq!(app.worktree_preview, vec![(1, "only ticket".to_string())]);
+    }
+
+    #[test]
+    fn enter_loads_tickets_when_the_branch_diverges_from_the_dir() {
+        let (_dir, mut app) = app_with_divergent_worktree();
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert_eq!(app.view, View::Tickets);
+        assert_eq!(app.active_workstream, "feat-foo");
+        assert_eq!(app.tickets.len(), 1);
+        assert_eq!(app.tickets[0].title, "only ticket");
     }
 
     #[test]
