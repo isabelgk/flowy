@@ -120,14 +120,22 @@ just skill-install   # copy into ~/.claude/skills, pinned against further edits
 Both overwrite whatever is already at `~/.claude/skills/flowy`. To scope the
 skill to one project instead, copy it into that project's `.claude/skills/`.
 
-It exposes six verbs, and also triggers on the equivalent plain-language
+It exposes seven verbs, and also triggers on the equivalent plain-language
 request:
 
 ```
-/flowy new igk/my-feature                     # branch + worktree + notes
+/flowy new igk/my-feature                      # branch + worktree + notes
 /flowy plan igk-my-feature                     # planning.md + tickets
 /flowy ticket igk-my-feature "crash on EOF"    # one ad-hoc ticket
 /flowy next igk-my-feature                     # what to pick up, into next.md
 /flowy implement igk-my-feature 3              # build, journal, mark done
+/flowy milestone igk-my-feature no-lua         # freeze a reached plan, keep going
 /flowy close igk-my-feature                    # audit + archive
 ```
+
+`milestone` is the one that has no CLI counterpart. A workstream can outlive
+several plans, and since `plan` overwrites `planning.md`, a plan that reached its
+goal on a branch with more to do has to be frozen before the next one is written;
+`milestone` moves it under `milestones/<nnn>-<slug>/` with a written summary. The
+tickets stay where they are, in one numbering sequence for the life of the
+workstream.

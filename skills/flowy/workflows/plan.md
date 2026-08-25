@@ -18,6 +18,15 @@ not inside a worktree, list `<repo_root>/worktrees/` and ask.
 
 1. **Read workstream context.** `<ws_dir>/meta.toml` and `<ws_dir>/status.md`.
 
+   If `<ws_dir>/planning.md` already exists, decide which of two things this run
+   is before overwriting it. A plan whose goal turned out to be wrong is replaced,
+   and that is this workflow. A plan whose goal was *reached*, on a branch with
+   more to do, is a milestone: it gets frozen by `milestone` first, and this run
+   then writes the next plan onto a clean top level. Check with
+   `flowy ticket status -w <workstream-name>` and read the existing goal - a
+   drained queue with the goal met is the signal. Ask rather than guess; step 3
+   overwrites, and a finished plan overwritten without being frozen is gone.
+
 2. **Explore the codebase.** Delegate to an `Explore` subagent
    (subagent_type: Explore). Hand it the worktree path from `meta.toml` and ask
    it to identify the files and components relevant to the goal, note key
@@ -30,7 +39,8 @@ not inside a worktree, list `<repo_root>/worktrees/` and ask.
    - Approach overview and key decisions.
    - Known risks or open questions.
 
-   Not a step-by-step list. Overwrite if it already exists.
+   Not a step-by-step list. Overwrite if it already exists, having settled step 1's
+   question first.
 
 4. **Measure the central claim of each ticket before writing it.** Reading the
    source tells you what a thing appears to do; it does not tell you what it

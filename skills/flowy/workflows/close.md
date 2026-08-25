@@ -16,7 +16,10 @@ a worktree, list `<repo_root>/worktrees/` and ask.
    uncommitted changes loses work permanently. Only proceed once the branch is
    clean, or the user explicitly confirms they want to discard.
 
-3. **Write `<ws_dir>/audit.md`** before archiving. From the worktree:
+3. **Write `<ws_dir>/audit.md`** before archiving. It covers the whole branch,
+   across every milestone it went through - a `milestones/` directory means the
+   plan was retired and replaced at least once, and those summaries say what each
+   one reached. From the worktree:
 
    ```
    git log --oneline --reverse
@@ -52,6 +55,7 @@ a worktree, list `<repo_root>/worktrees/` and ask.
 
    This moves the notes out of the worktree to
    `<repo_root>/notes/workstreams/archive/<name>/` before removing the worktree,
-   so they outlive it. `flowy worktree unarchive <name>` reverses both steps.
+   so they outlive it, `milestones/` and all. `flowy worktree unarchive <name>`
+   reverses both steps.
 
 6. **Report** what was removed and where the notes were archived.

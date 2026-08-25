@@ -1,6 +1,6 @@
 ---
 name: flowy
-description: Drive the flowy CLI and the workstream style of working - bare git repos, per-branch worktrees, and numbered markdown tickets that live beside the code. Use this whenever the repo has a `.bare/` directory or a `worktrees/` directory, whenever the user runs `flowy` or mentions workstreams, tickets, or worktrees, and whenever they ask to start a branch, plan a piece of work, file or pick up or finish a ticket, figure out what to work on next, or close out finished work. Also use it for the bare verbs `/flowy new|plan|next|implement|ticket|close`, and for casual asks like "file a ticket for that", "what's next here", "let's start on 4", or "I'm done with this branch" - even when neither flowy nor the word ticket is spoken.
+description: Drive the flowy CLI and the workstream style of working - bare git repos, per-branch worktrees, and numbered markdown tickets that live beside the code. Use this whenever the repo has a `.bare/` directory or a `worktrees/` directory, whenever the user runs `flowy` or mentions workstreams, tickets, or worktrees, and whenever they ask to start a branch, plan a piece of work, file or pick up or finish a ticket, figure out what to work on next, or close out finished work. Also use it for the bare verbs `/flowy new|plan|next|implement|ticket|milestone|close`, and for casual asks like "file a ticket for that", "what's next here", "let's start on 4", "we reached the goal, clear this out for the next phase", or "I'm done with this branch" - even when neither flowy nor the word ticket is spoken.
 ---
 
 # flowy and the workstream style
@@ -27,6 +27,7 @@ project/
       planning.md                     # narrative plan (written by `plan`)
       next.md                         # rolling recommendation (by `next`)
       tickets/001.md                  # TOML frontmatter (+++) holds status
+      milestones/001-<slug>/          # a finished plan, frozen (by `milestone`)
   notes/workstreams/archive/<name>/   # archived workstreams, same shape
 ```
 
@@ -55,7 +56,13 @@ walk up, find `.bare/`, and run against that.
 | `ticket`    | Add one ticket without a planning run            | `workflows/ticket.md`    |
 | `next`      | Decide what to pick up, write `next.md`          | `workflows/next.md`      |
 | `implement` | Build one ticket, journal it, mark it done       | `workflows/implement.md` |
+| `milestone` | Freeze a finished plan, keep the branch going    | `workflows/milestone.md` |
 | `close`     | Write the audit, archive, remove the worktree    | `workflows/close.md`     |
+
+A workstream can outlive several plans. `milestone` is the boundary between two of
+them: the goal was reached, the queue drained, and the branch has more to do, so
+the plan is frozen under `milestones/` and `plan` runs again on the same branch.
+`close` is the end of the branch itself.
 
 Read exactly one workflow file - the one matching the work at hand. They are
 self-contained procedures; the shared model is here, so you do not need to read
@@ -65,7 +72,7 @@ a sibling to understand one.
 
 Two ways in.
 
-**Explicit verb.** `$ARGUMENTS` starts with one of the six verbs above, and the
+**Explicit verb.** `$ARGUMENTS` starts with one of the seven verbs above, and the
 rest is that workflow's arguments:
 
 ```
@@ -74,6 +81,7 @@ rest is that workflow's arguments:
 /flowy next igk-my-feature
 /flowy implement igk-my-feature 3
 /flowy ticket igk-my-feature "crash on empty input"
+/flowy milestone igk-my-feature no-lua
 /flowy close igk-my-feature
 ```
 
@@ -88,6 +96,8 @@ because the request arrived mid-conversation:
 - "let's do 4" / "start on the parser ticket" -> `implement`
 - "start a branch for X" / "new workstream for X" -> `new`
 - "write up a plan for this" / "break this into tickets" -> `plan`
+- "we hit the goal, what's the next phase" / "archive this milestone but keep the
+  branch" / "clear this out for a new plan" -> `milestone`
 - "I'm done with this branch" / "clean this up" -> `close`
 
 When the workstream is unnamed, default to the one for the current git branch -
@@ -100,13 +110,34 @@ task already understood. When it is genuinely unclear, ask - the cost of
 guessing wrong is a planning run the user did not want, or a ticket that hides
 five steps inside it.
 
+The other ambiguity is `milestone` against `plan` and `close`, and it turns on
+one question: was the goal reached? A reached goal on a branch with more to do is
+`milestone` and then `plan`; a goal that turned out to be wrong is `plan` alone,
+overwriting; a branch with nothing left is `close`. Asking beats guessing here
+too, because `plan` overwrites `planning.md` and a finished plan overwritten
+without being frozen is not recoverable from the notes.
+
 ## Conventions that hold across every workflow
 
-**The CLI owns the files.** `flowy ticket add` assigns ticket numbers
+**The CLI owns the ticket files.** `flowy ticket add` assigns ticket numbers
 sequentially and appends to `status.md`; `flowy ticket done` and
-`flowy ticket journal` edit frontmatter and append sections. Writing ticket
-files or `status.md` entries by hand desynchronizes the numbering and the log.
-Write `planning.md`, `next.md`, and `audit.md` directly - those have no CLI.
+`flowy ticket journal` edit frontmatter and append sections. Writing a ticket file
+by hand desynchronizes the numbering and loses the log entry that goes with it.
+Write `planning.md`, `next.md`, `audit.md` and the milestone summaries directly -
+those have no CLI.
+
+`status.md` is the one file both write. The CLI appends a line per ticket event,
+and the workflows append the events that are not ticket events - planning
+complete, milestone closed, workstream closed. It is append-only either way, and
+nothing derives state from it, so an added line in the same shape is safe; what is
+not safe is editing or removing lines already there, which is the workstream's
+only chronology.
+
+**Ticket numbers are one sequence for the life of the workstream.** `flowy ticket
+add` numbers from the highest file in `tickets/`, so a directory emptied of its
+history restarts at `001` and collides with every number the plans and journals
+already cite. Nothing may move the highest-numbered ticket out of `tickets/` -
+which is why `milestone` freezes the plan and leaves the tickets where they are.
 
 **Read with `--json`.** `flowy --json ticket show -w <ws> <n>` and
 `flowy ticket list -w <ws> --status pending --json` are the parseable forms.

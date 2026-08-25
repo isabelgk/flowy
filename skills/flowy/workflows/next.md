@@ -38,7 +38,11 @@ not inside a worktree, list `<repo_root>/worktrees/` and ask.
    flowy ticket list -w <workstream-name> --status pending --json
    ```
    If the pending count is 0, report that nothing is left to schedule and stop -
-   do not write an empty `next.md` over a real one.
+   do not write an empty `next.md` over a real one. Say which of the three
+   endings a drained queue means, reading `planning.md`'s goal against what
+   landed: the goal is reached and the branch has more to do (`milestone`, then
+   `plan`), the goal is reached and the branch is finished (`close`), or the goal
+   is not reached and the remaining work was never ticketed (`plan`).
 
 3. **Read every pending ticket and reason about ordering.** For more than ~15
    pending tickets, delegate to a `general-purpose` subagent rather than reading
