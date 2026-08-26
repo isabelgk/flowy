@@ -83,8 +83,9 @@ not inside a worktree, list `<repo_root>/worktrees/` and ask.
    in `meta.toml`): `git -C <worktree-path> log -1 --format=%h`. Skip if there
    is no worktree.
 
-5. **Write `<ws_dir>/next.md`**, overwriting it entirely. Follow this shape, but
-   omit a section if there is nothing real to put in it - do not pad:
+5. **Write `next.md`** with `flowy notes write -w <workstream-name> next`, which
+   overwrites it entirely. Follow this shape, but omit a section if there is
+   nothing real to put in it - do not pad:
 
    ```markdown
    # Suggested next ticket

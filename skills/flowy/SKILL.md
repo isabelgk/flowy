@@ -43,9 +43,10 @@ ws_dir = <repo_root>/worktrees/<name>/.local/workstream
 ```
 
 `flowy` does that walk-up itself, so you only need to resolve `repo_root` by
-hand when you are reading or writing these files directly rather than going
-through the CLI. Do not skip a `flowy` call because cwd is not a git repo -
-walk up, find `.bare/`, and run against that.
+hand when you are reading these files directly rather than going through the CLI;
+`flowy notes path -w <name>` prints the directory when you want it from the CLI.
+Do not skip a `flowy` call because cwd is not a git repo - walk up, find
+`.bare/`, and run against that.
 
 ## The lifecycle
 
@@ -119,19 +120,33 @@ without being frozen is not recoverable from the notes.
 
 ## Conventions that hold across every workflow
 
-**The CLI owns the ticket files.** `flowy ticket add` assigns ticket numbers
-sequentially and appends to `status.md`; `flowy ticket done` and
-`flowy ticket journal` edit frontmatter and append sections. Writing a ticket file
-by hand desynchronizes the numbering and loses the log entry that goes with it.
-Write `planning.md`, `next.md`, `audit.md` and the milestone summaries directly -
-those have no CLI.
+**The CLI owns the files; go through it rather than around it.** `flowy ticket
+add` assigns ticket numbers sequentially and appends to `status.md`;
+`flowy ticket done` and `flowy ticket journal` edit frontmatter and append
+sections. `flowy notes write|append` handles `planning.md`, `next.md`,
+`audit.md`, and the milestone summaries, and `flowy notes log` appends to
+`status.md`. Writing these by hand desynchronizes ticket numbering, loses the log
+entry that goes with an event, or reconstructs a path the CLI already knows.
 
-`status.md` is the one file both write. The CLI appends a line per ticket event,
-and the workflows append the events that are not ticket events - planning
-complete, milestone closed, workstream closed. It is append-only either way, and
-nothing derives state from it, so an added line in the same shape is safe; what is
-not safe is editing or removing lines already there, which is the workstream's
-only chronology.
+Every one of these commands takes its prose from stdin or a file rather than
+from an argument, so pass markdown through a quoted heredoc:
+
+```bash
+flowy notes write -w <workstream-name> planning <<'EOF'
+# Goal
+...
+EOF
+```
+
+The quoted delimiter is what makes backticks, quotes, and `$` survive verbatim.
+Building the same text into a `-d "..."` argument means escaping it first, and
+that is where ticket bodies get mangled.
+
+`status.md` is append-only, and nothing derives state from it. The CLI appends a
+line per ticket event; `flowy notes log` is for the events that are not ticket
+events - planning complete, milestone frozen, workstream closed. Adding a line is
+always safe; editing or removing lines already there is not, because this is the
+workstream's only chronology.
 
 **Ticket numbers are one sequence for the life of the workstream.** `flowy ticket
 add` numbers from the highest file in `tickets/`, so a directory emptied of its

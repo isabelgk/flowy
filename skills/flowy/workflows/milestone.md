@@ -44,10 +44,7 @@ Everything after the verb: `<workstream-name> [slug]`
    reached, stop and say so - a summary claiming a goal was reached is worse than
    no summary.
 
-2. **Pick the number and slug.** `milestones/<nnn>-<slug>/`, zero-padded, one past
-   the highest directory already there. The slug names the goal, not the date.
-
-3. **Read the material the summary is made of.** `planning.md` in full, including
+2. **Read the material the summary is made of.** `planning.md` in full, including
    every amendment - the amendments are where the plan corrected itself, and a
    correction is exactly what a later reader needs. `next.md` for where the board
    stood. Then the closing summaries of the milestone's tickets:
@@ -60,12 +57,36 @@ Everything after the verb: `<workstream-name> [slug]`
    summary is where a decision was actually settled, and a decision settled there
    and nowhere else is the thing most likely to be lost.
 
-4. **Write `<ws_dir>/milestones/<nnn>-<slug>/summary.md`.** This is the artifact
+   Read before freezing. Step 3 moves both files, and the summary is written from
+   what they said.
+
+3. **Freeze the plan.**
+
+   ```
+   flowy --json notes milestone -w <workstream-name> <slug>
+   ```
+
+   This picks the next number, creates `milestones/<nnn>-<slug>/`, moves
+   `planning.md` and `next.md` into it, and appends the boundary line to
+   `status.md`. It moves rather than copies: two live copies of a finished plan is
+   the confusion this whole step exists to prevent, and the next `plan` run would
+   overwrite the top-level one anyway.
+
+   The top level is now left with no `planning.md`, which is what makes the next
+   `plan` run write a fresh one instead of appending to a finished one.
+
+   Read `dir` out of the JSON - that is where the summary goes. `pending_tickets`
+   is reported rather than refused; a non-zero count means step 1's question was
+   not settled, so stop and settle it. Nothing needs to be logged by hand
+   afterward.
+
+4. **Write `summary.md` in the milestone directory.** This is the artifact
    that matters; the frozen plan beside it is working detail. It has to stand on
    its own, so do not write it as a diff against the plan or point at another file
    for something a reader needs:
 
-   ```markdown
+   ```bash
+   flowy notes write -w <workstream-name> milestones/<nnn>-<slug>/summary.md <<'EOF'
    # Milestone <n>: <goal, in a phrase>
 
    Opened <date>, closed <date>. Branch `<branch>`, ending at `<hash>`.
@@ -90,19 +111,12 @@ Everything after the verb: `<workstream-name> [slug]`
    ## Where the detail is
    One short section. The frozen plan and recommendation beside this file, and the
    fact that the tickets stayed in the workstream's `tickets/`.
+   EOF
    ```
 
    Omit a section that would be empty rather than writing "none".
 
-5. **Freeze the plan.** Move `planning.md` and `next.md` into the milestone
-   directory - move, not copy. Two live copies of a finished plan is the confusion
-   this whole step exists to prevent, and the next `plan` run would overwrite the
-   top-level one anyway.
-
-   The top level is now left with no `planning.md`, which is what makes the next
-   `plan` run write a fresh one instead of appending to a finished one.
-
-6. **Leave `tickets/` where it is.** Every milestone's tickets stay in the one
+5. **Leave `tickets/` where it is.** Every milestone's tickets stay in the one
    directory under one numbering sequence: the plans and the journals cite those
    numbers constantly, and `flowy ticket add` numbers from the highest file it
    finds, so moving them out restarts numbering at `001` and collides with
@@ -110,16 +124,12 @@ Everything after the verb: `<workstream-name> [slug]`
 
    `notes/`, `tools/`, `archive/` and anything else useful past one plan stay too.
 
-7. **Write or update `<ws_dir>/milestones/README.md`.** A short statement of the
-   convention plus one entry per milestone: number, slug, dates, ticket range, the
-   goal in a phrase, and whether it was reached. This is the index somebody lands
-   on, so it says why `tickets/` and `status.md` did not move.
+6. **Write or update `milestones/README.md`**, with
+   `flowy notes write -w <workstream-name> milestones/README.md`. A short
+   statement of the convention plus one entry per milestone: number, slug, dates,
+   ticket range, the goal in a phrase, and whether it was reached. This is the
+   index somebody lands on, so it says why `tickets/` and `status.md` did not
+   move. Read the existing file first when there is one - this overwrites.
 
-8. **Append a boundary line** to `<ws_dir>/status.md`:
-   `- <current date and time>: Milestone <nnn>-<slug> closed. <goal> reached.`
-
-   One chronology spans the whole workstream, so the boundary belongs in it rather
-   than in a per-milestone log.
-
-9. **Report** the milestone path, and say that `plan` is the next step - the
+7. **Report** the milestone path, and say that `plan` is the next step - the
    workstream now has no plan, which is deliberate and not a missing file.

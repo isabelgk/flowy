@@ -33,7 +33,7 @@ not inside a worktree, list `<repo_root>/worktrees/` and ask.
    interfaces and dependencies, and flag anything architecturally significant.
    Use its findings as the research input - do not re-explore yourself.
 
-3. **Write `<ws_dir>/planning.md`** covering:
+3. **Write `planning.md`** covering:
    - Goal and motivation.
    - Relevant context and constraints.
    - Approach overview and key decisions.
@@ -41,6 +41,13 @@ not inside a worktree, list `<repo_root>/worktrees/` and ask.
 
    Not a step-by-step list. Overwrite if it already exists, having settled step 1's
    question first.
+
+   ```bash
+   flowy notes write -w <workstream-name> planning <<'EOF'
+   # Goal
+   ...
+   EOF
+   ```
 
 4. **Measure the central claim of each ticket before writing it.** Reading the
    source tells you what a thing appears to do; it does not tell you what it
@@ -65,8 +72,17 @@ not inside a worktree, list `<repo_root>/worktrees/` and ask.
 
 5. **Create tickets.** Once per discrete implementation step:
 
-   ```
-   flowy ticket add -w <workstream-name> "<title>" -d "<scope, affected files, and acceptance criteria>"
+   ```bash
+   flowy ticket add -w <workstream-name> "<title>" --body-file - <<'EOF'
+   ## Scope
+   ...
+
+   ## Affected files
+   - ...
+
+   ## Acceptance criteria
+   - ...
+   EOF
    ```
 
    `flowy ticket add` assigns numbers sequentially and appends individual
@@ -77,8 +93,11 @@ not inside a worktree, list `<repo_root>/worktrees/` and ask.
    The description uses the shared ticket description format from SKILL.md,
    plus the measurements from step 4.
 
-6. **Update status.** Append to `<ws_dir>/status.md`:
-   `- <current date and time>: Planning complete. <N> tickets created.`
+6. **Update status.**
+
+   ```
+   flowy notes log -w <workstream-name> "Planning complete. <N> tickets created."
+   ```
 
 7. **Report** the plan path, the tickets written, and a brief summary. Say what
    was measured versus inferred, and name anything the measurements

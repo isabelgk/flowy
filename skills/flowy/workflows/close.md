@@ -16,7 +16,7 @@ a worktree, list `<repo_root>/worktrees/` and ask.
    uncommitted changes loses work permanently. Only proceed once the branch is
    clean, or the user explicitly confirms they want to discard.
 
-3. **Write `<ws_dir>/audit.md`** before archiving. It covers the whole branch,
+3. **Write `audit.md`** before archiving. It covers the whole branch,
    across every milestone it went through - a `milestones/` directory means the
    plan was retired and replaced at least once, and those summaries say what each
    one reached. From the worktree:
@@ -27,7 +27,8 @@ a worktree, list `<repo_root>/worktrees/` and ask.
 
    Write:
 
-   ```markdown
+   ```bash
+   flowy notes write -w <name> audit.md <<'EOF'
    # Audit: <safe-name>
    Closed: <current date and time>
 
@@ -35,10 +36,14 @@ a worktree, list `<repo_root>/worktrees/` and ask.
    - <hash> <subject>
    - <hash> <subject>
    ...
+   EOF
    ```
 
-4. **Append a closing entry** to `<ws_dir>/status.md`:
-   `- <current date and time>: Workstream closed.`
+4. **Append a closing entry:**
+
+   ```
+   flowy notes log -w <name> "Workstream closed."
+   ```
 
    Both this and `audit.md` have to be written *before* the archive step -
    afterward the worktree is gone and `ws_dir` no longer exists.

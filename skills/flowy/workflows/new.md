@@ -37,10 +37,10 @@ and stop rather than scaffolding something the tooling cannot read.
    This creates `<repo_root>/worktrees/<safe>` and writes
    `<ws_dir>/meta.toml` inside it.
 
-5. **Write `<ws_dir>/status.md`** with one line:
+5. **Open the log:**
 
    ```
-   [<ISO-8601 timestamp>] Workstream created.
+   flowy notes log -w <safe> "Workstream created."
    ```
 
 6. **Report** the worktree path, the workstream path, and the branch. Suggest

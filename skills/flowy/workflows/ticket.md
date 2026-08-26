@@ -59,10 +59,11 @@ from context below.
    `## Affected files`, `## Acceptance criteria`, and optionally
    `## Related tickets`, per the rules already in SKILL.md.
 
-5. **Create the ticket** with a heredoc so newlines survive:
+5. **Create the ticket.** `--body-file -` reads the body from stdin, so a quoted
+   heredoc carries newlines and backticks through verbatim:
 
    ```bash
-   flowy ticket add -w <workstream-name> "<title>" -d "$(cat <<'EOF'
+   flowy ticket add -w <workstream-name> "<title>" --body-file - <<'EOF'
    ## Scope
    ...
 
@@ -72,7 +73,6 @@ from context below.
    ## Acceptance criteria
    - ...
    EOF
-   )"
    ```
 
 6. **Report** the filename printed by `flowy ticket add`.

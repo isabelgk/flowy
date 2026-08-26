@@ -66,9 +66,15 @@ Everything after the verb: `<workstream-name> [ticket-number]`
 
 7. **Keep the ticket's Journal up to date** throughout. After each commit:
 
+   ```bash
+   flowy ticket journal -w <workstream-name> <ticket-number> \
+     --heading "<brief description>" --body-file - <<'EOF'
+   <what was done, past tense>
+   EOF
    ```
-   flowy ticket journal -w <workstream-name> <ticket-number> "<what was done, past tense>" --heading "<brief description>"
-   ```
+
+   The heredoc matters once the entry names a symbol or quotes output;
+   `--body-file -` is what keeps backticks and quotes from needing escapes.
 
 8. **Dispose of incidental findings - default to fixing, not filing.**
    Implementation work surfaces adjacent defects constantly, and a new ticket per
@@ -129,8 +135,10 @@ Everything after the verb: `<workstream-name> [ticket-number]`
 
 10. **On user confirmation**, mark it done:
 
-   ```
-   flowy ticket done -w <workstream-name> <ticket-number> --summary "<summary>"
+   ```bash
+   flowy ticket done -w <workstream-name> <ticket-number> --body-file - <<'EOF'
+   <summary>
+   EOF
    ```
 
    The summary should cover:
