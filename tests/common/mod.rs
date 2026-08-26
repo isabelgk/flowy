@@ -99,10 +99,6 @@ impl TestRepo {
         ws_dir_in(&self.root, name)
     }
 
-    pub fn archived_ws_dir(&self, name: &str) -> PathBuf {
-        archived_ws_dir_in(&self.root, name)
-    }
-
     pub fn ticket(&self, name: &str, number: u32) -> PathBuf {
         self.ws_dir(name)
             .join("tickets")
