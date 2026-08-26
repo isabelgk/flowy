@@ -8,6 +8,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use super::read_body_file;
 use crate::core::{
     meta::read_meta,
     names::{safe_name, workstream_dir},
@@ -93,6 +94,18 @@ fn append_status_entry(ws_dir: &Path, entry: &str) -> Result<()> {
         .with_context(|| format!("opening {}", path.display()))?
         .write_all(line.as_bytes())?;
     Ok(())
+}
+
+// Prose for a ticket arrives either inline under `inline_arg` or out of band via
+// --body-file, which clap already keeps mutually exclusive.
+fn body_arg(matches: &ArgMatches, inline_arg: &str) -> Result<Option<String>> {
+    if let Some(text) = matches.get_one::<String>(inline_arg) {
+        return Ok(Some(text.clone()));
+    }
+    match matches.get_one::<String>("body-file") {
+        Some(path) => Ok(Some(read_body_file(path)?)),
+        None => Ok(None),
+    }
 }
 
 fn print_ticket_table(section: &str, tickets: &[Ticket]) {
@@ -255,10 +268,10 @@ fn add(matches: &ArgMatches) -> Result<()> {
     let root = get_repo_root(matches)?;
     let json = matches.get_flag("json");
     let title = matches.get_one::<String>("title").unwrap();
-    let description = matches.get_one::<String>("description");
+    let body = body_arg(matches, "description")?;
 
     let (_, ws_dir) = resolve_workstream(matches, &root)?;
-    let (number, path) = create_ticket(&ws_dir, title, description.map(|d| d.as_str()))?;
+    let (number, path) = create_ticket(&ws_dir, title, body.as_deref())?;
 
     append_status_entry(&ws_dir, &format!("added {number:03} ({title})"))?;
 
@@ -276,7 +289,7 @@ fn done(matches: &ArgMatches) -> Result<()> {
     let root = get_repo_root(matches)?;
     let json = matches.get_flag("json");
     let id = matches.get_one::<String>("id").unwrap();
-    let summary = matches.get_one::<String>("summary");
+    let summary = body_arg(matches, "summary")?;
     let wont_impl = matches.get_flag("wont-implement");
     let reopen = matches.get_flag("reopen");
 
@@ -289,7 +302,7 @@ fn done(matches: &ArgMatches) -> Result<()> {
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
 
     let new_content =
-        rewrite_status_and_append(&content, reopen, wont_impl, summary.map(|s| s.as_str()));
+        rewrite_status_and_append(&content, reopen, wont_impl, summary.as_deref());
     std::fs::write(&path, &new_content).with_context(|| format!("writing {}", path.display()))?;
 
     let action = if reopen {
@@ -374,7 +387,8 @@ fn journal(matches: &ArgMatches) -> Result<()> {
     let root = get_repo_root(matches)?;
     let json = matches.get_flag("json");
     let id = matches.get_one::<String>("id").unwrap();
-    let text = matches.get_one::<String>("text").unwrap();
+    let text = body_arg(matches, "text")?
+        .ok_or_else(|| anyhow::anyhow!("no journal text: pass it inline or via --body-file"))?;
     let heading = matches.get_one::<String>("heading");
 
     let (_, ws_dir) = resolve_workstream(matches, &root)?;
@@ -398,7 +412,7 @@ fn journal(matches: &ArgMatches) -> Result<()> {
         Some(h) => format!("### [{ts}] {h}"),
         None => format!("### [{ts}]"),
     };
-    content.push_str(&format!("\n{header}\n\n{text}\n"));
+    content.push_str(&format!("\n{header}\n\n{}\n", text.trim_end()));
 
     std::fs::write(&path, &content).with_context(|| format!("writing {}", path.display()))?;
 

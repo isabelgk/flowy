@@ -140,6 +140,13 @@ fn ticket_cmd() -> Command {
                         .long("description")
                         .short('d')
                         .value_name("TEXT"),
+                )
+                .arg(
+                    Arg::new("body-file")
+                        .long("body-file")
+                        .value_name("PATH")
+                        .conflicts_with("description")
+                        .help("Read the ticket body from a file; `-` means stdin"),
                 ),
         )
         .subcommand(
@@ -148,6 +155,13 @@ fn ticket_cmd() -> Command {
                 .about("Mark a ticket as done")
                 .arg(Arg::new("id").required(true).index(1))
                 .arg(Arg::new("summary").long("summary").value_name("TEXT"))
+                .arg(
+                    Arg::new("body-file")
+                        .long("body-file")
+                        .value_name("PATH")
+                        .conflicts_with("summary")
+                        .help("Read the closing summary from a file; `-` means stdin"),
+                )
                 .arg(
                     Arg::new("wont-implement")
                         .long("wont-implement")
@@ -160,7 +174,18 @@ fn ticket_cmd() -> Command {
                 .visible_alias("j")
                 .about("Append a journal entry to a ticket")
                 .arg(Arg::new("id").required(true).index(1))
-                .arg(Arg::new("text").required(true).index(2))
+                .arg(
+                    Arg::new("text")
+                        .index(2)
+                        .required_unless_present("body-file")
+                        .conflicts_with("body-file"),
+                )
+                .arg(
+                    Arg::new("body-file")
+                        .long("body-file")
+                        .value_name("PATH")
+                        .help("Read the entry from a file; `-` means stdin"),
+                )
                 .arg(Arg::new("heading").long("heading").value_name("TEXT")),
         )
         .subcommand(

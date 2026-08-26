@@ -1590,3 +1590,153 @@ fn t_add_concurrent_adds_get_distinct_numbers() {
     titles.dedup();
     assert_eq!(titles.len(), N, "every add should keep its own title");
 }
+
+#[test]
+fn t_add_body_file_reads_a_file() {
+    let repo = TestRepo::new();
+    new_workstream(&repo, "test/branch");
+
+    let body = repo.root.join("body.md");
+    let prose = "## Scope\n\nHandles `foo --bar` and \"quoted\" text.\n\n- one\n- two\n";
+    fs::write(&body, prose).unwrap();
+
+    repo.cmd()
+        .args(["t", "add", "-w", "test-branch", "My ticket", "--body-file"])
+        .arg(&body)
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(repo.ticket("test-branch", 1)).unwrap();
+    assert!(content.contains(prose.trim_end()));
+}
+
+#[test]
+fn t_add_body_file_dash_reads_stdin() {
+    let repo = TestRepo::new();
+    new_workstream(&repo, "test/branch");
+
+    repo.cmd()
+        .args([
+            "t",
+            "add",
+            "-w",
+            "test-branch",
+            "My ticket",
+            "--body-file",
+            "-",
+        ])
+        .write_stdin("Body with a $VAR and `backticks`.\n")
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(repo.ticket("test-branch", 1)).unwrap();
+    assert!(content.contains("Body with a $VAR and `backticks`."));
+}
+
+#[test]
+fn t_add_rejects_description_and_body_file_together() {
+    let repo = TestRepo::new();
+    new_workstream(&repo, "test/branch");
+
+    repo.cmd()
+        .args([
+            "t",
+            "add",
+            "-w",
+            "test-branch",
+            "My ticket",
+            "-d",
+            "inline",
+            "--body-file",
+            "-",
+        ])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn t_add_missing_body_file_fails_without_creating_a_ticket() {
+    let repo = TestRepo::new();
+    new_workstream(&repo, "test/branch");
+
+    repo.cmd()
+        .args([
+            "t",
+            "add",
+            "-w",
+            "test-branch",
+            "My ticket",
+            "--body-file",
+            "/nonexistent/body.md",
+        ])
+        .assert()
+        .failure();
+
+    assert!(!repo.ticket("test-branch", 1).exists());
+}
+
+#[test]
+fn t_journal_body_file_reads_stdin() {
+    let repo = TestRepo::new();
+    new_workstream(&repo, "test/branch");
+    repo.cmd()
+        .args(["t", "add", "-w", "test-branch", "My ticket"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .args([
+            "t",
+            "journal",
+            "-w",
+            "test-branch",
+            "1",
+            "--body-file",
+            "-",
+            "--heading",
+            "Findings",
+        ])
+        .write_stdin("Measured with `perf stat`:\n\n    3.2s -> 0.8s\n")
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(repo.ticket("test-branch", 1)).unwrap();
+    assert!(content.contains("] Findings"));
+    assert!(content.contains("3.2s -> 0.8s"));
+}
+
+#[test]
+fn t_journal_requires_text_or_body_file() {
+    let repo = TestRepo::new();
+    new_workstream(&repo, "test/branch");
+    repo.cmd()
+        .args(["t", "add", "-w", "test-branch", "My ticket"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .args(["t", "journal", "-w", "test-branch", "1"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn t_done_summary_from_body_file() {
+    let repo = TestRepo::new();
+    new_workstream(&repo, "test/branch");
+    repo.cmd()
+        .args(["t", "add", "-w", "test-branch", "My ticket"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .args(["t", "done", "-w", "test-branch", "1", "--body-file", "-"])
+        .write_stdin("Landed in `parser.rs`.\n\nThe \"fast path\" was the fix.\n")
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(repo.ticket("test-branch", 1)).unwrap();
+    assert!(content.contains("status = \"complete\""));
+    assert!(content.contains("## Summary"));
+    assert!(content.contains("The \"fast path\" was the fix."));
+}

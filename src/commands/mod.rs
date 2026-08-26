@@ -2,9 +2,10 @@ mod migrate;
 mod ticket;
 pub mod worktree;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::ArgMatches;
 use clap_complete::Shell;
+use std::io::Read as _;
 use std::path::PathBuf;
 
 use crate::core::repo::find_repo_root;
@@ -36,4 +37,22 @@ pub fn dispatch(matches: ArgMatches) -> Result<()> {
         }
         _ => Ok(()),
     }
+}
+
+// Prose passed on the command line has to survive the shell's quoting rules,
+// which is where multi-line markdown full of backticks and quotes goes wrong.
+// Reading it from a file or a pipe sidesteps that entirely.
+pub fn read_body_file(path: &str) -> Result<String> {
+    if path == "-" {
+        return read_stdin();
+    }
+    std::fs::read_to_string(path).with_context(|| format!("reading {path}"))
+}
+
+pub fn read_stdin() -> Result<String> {
+    let mut buf = String::new();
+    std::io::stdin()
+        .read_to_string(&mut buf)
+        .context("reading stdin")?;
+    Ok(buf)
 }

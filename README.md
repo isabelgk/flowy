@@ -85,6 +85,24 @@ Manage markdown tickets. Workstream defaults to the current git branch.
 
 Use `-w / --workstream <NAME>` to target a workstream other than the current branch.
 
+`add`, `done`, and `journal` all take prose. Passing it inline (`-d`,
+`--summary`, or the positional journal text) is fine for a phrase, but multi-line
+markdown containing quotes or backticks has to survive the shell's quoting rules
+first. `--body-file <PATH>` reads it out of band instead, and `--body-file -`
+reads stdin:
+
+```sh
+flowy t add "Parser rejects empty input" --body-file - <<'EOF'
+## Scope
+`parse_header` in src/parse.rs.
+
+## Acceptance
+Empty input returns Err rather than panicking.
+EOF
+```
+
+`--body-file` is mutually exclusive with the inline form on each subcommand.
+
 ### `flowy migrate`
 
 Move workstream notes from the old `notes/workstreams/<name>/` layout into
