@@ -1531,3 +1531,62 @@ fn wt_ls_json_names_the_worktree_dir_not_the_branch() {
             .is_dir()
     );
 }
+
+fn new_workstream(repo: &TestRepo, branch: &str) {
+    repo.cmd()
+        .args(["wt", "new", "-b", branch])
+        .assert()
+        .success();
+}
+
+// The allocator claims a number with create_new, so simultaneous adds must land
+// on distinct files rather than the last writer overwriting the rest.
+#[test]
+fn t_add_concurrent_adds_get_distinct_numbers() {
+    let repo = TestRepo::new();
+    new_workstream(&repo, "test/branch");
+
+    const N: usize = 8;
+    let children: Vec<_> = (0..N)
+        .map(|i| {
+            std::process::Command::new(env!("CARGO_BIN_EXE_flowy"))
+                .arg("--repo-root")
+                .arg(&repo.root)
+                .args(["t", "add", "-w", "test-branch", &format!("Ticket {i}")])
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .expect("spawn flowy")
+        })
+        .collect();
+    for mut child in children {
+        assert!(child.wait().expect("wait").success());
+    }
+
+    let tickets_dir = repo.ws_dir("test-branch").join("tickets");
+    let mut numbers: Vec<String> = fs::read_dir(&tickets_dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    numbers.sort();
+    assert_eq!(
+        numbers.len(),
+        N,
+        "expected {N} distinct tickets, got {numbers:?}"
+    );
+
+    let mut titles: Vec<String> = numbers
+        .iter()
+        .map(|n| {
+            let content = fs::read_to_string(tickets_dir.join(n)).unwrap();
+            content
+                .lines()
+                .find(|l| l.starts_with("title = "))
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect();
+    titles.sort();
+    titles.dedup();
+    assert_eq!(titles.len(), N, "every add should keep its own title");
+}

@@ -29,7 +29,9 @@ refuse; the entry is local to your clone and never committed.
 
 Ticket metadata lives in TOML frontmatter (`+++` delimiters) with `title` and
 `status` fields. Status values: `"pending"`, `"complete"`, `"wont-implement"`.
-Ticket IDs are zero-padded three-digit numbers (`001`, `002`, ...).
+Ticket IDs are zero-padded three-digit numbers (`001`, `002`, ...), claimed
+atomically so that concurrent `ticket add` runs get distinct numbers rather than
+the last writer overwriting the rest.
 
 ## Global options
 

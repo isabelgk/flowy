@@ -12,7 +12,7 @@ use crate::core::{
     meta::read_meta,
     names::{safe_name, workstream_dir},
     repo::{cwd_worktree, find_repo_root, worktrees_dir},
-    ticket::{Status, Ticket, load_tickets, resolve_ticket, ticket_path},
+    ticket::{Status, Ticket, create_ticket, load_tickets, resolve_ticket, ticket_path},
 };
 use crate::output::print_json;
 
@@ -258,32 +258,7 @@ fn add(matches: &ArgMatches) -> Result<()> {
     let description = matches.get_one::<String>("description");
 
     let (_, ws_dir) = resolve_workstream(matches, &root)?;
-
-    std::fs::create_dir_all(ws_dir.join("tickets"))
-        .with_context(|| format!("creating tickets dir in {}", ws_dir.display()))?;
-
-    let existing = load_tickets(&ws_dir).unwrap_or_default();
-    let number = existing.iter().map(|t| t.number).max().unwrap_or(0) + 1;
-    let path = ticket_path(&ws_dir, number);
-
-    #[derive(serde::Serialize)]
-    struct NewFrontmatter<'a> {
-        status: &'a str,
-        title: &'a str,
-    }
-    let fm = toml::to_string(&NewFrontmatter {
-        status: "pending",
-        title,
-    })
-    .context("serializing ticket frontmatter")?;
-    let fm = fm.trim_end_matches('\n');
-    let mut content = format!("+++\n{fm}\n+++\n");
-    if let Some(desc) = description {
-        content.push('\n');
-        content.push_str(desc);
-        content.push('\n');
-    }
-    std::fs::write(&path, &content).with_context(|| format!("writing {}", path.display()))?;
+    let (number, path) = create_ticket(&ws_dir, title, description.map(|d| d.as_str()))?;
 
     append_status_entry(&ws_dir, &format!("added {number:03} ({title})"))?;
 

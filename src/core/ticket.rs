@@ -1,6 +1,11 @@
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
+
+// Bound on the search for a free ticket number, so a directory that somehow
+// cannot accept a new file fails instead of looping.
+const RACE_RETRY_LIMIT: u32 = 1000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -102,6 +107,79 @@ pub fn resolve_ticket<'a>(tickets: &'a [Ticket], id: &str) -> Result<&'a Ticket>
         .iter()
         .find(|t| t.number == n)
         .ok_or_else(|| anyhow::anyhow!("no ticket with number {n}"))
+}
+
+// Highest ticket number present, read from filenames rather than by parsing the
+// tickets. A malformed ticket file must not lower this number, or the next add
+// would reuse a number that is already taken.
+pub fn highest_number(workstream_dir: &Path) -> u32 {
+    let Ok(entries) = std::fs::read_dir(workstream_dir.join("tickets")) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            name.strip_suffix(".md")?.parse::<u32>().ok()
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+// Claims the next free number with `create_new`, so two adds racing on the same
+// workstream cannot land on the same file: the loser sees AlreadyExists and
+// moves to the next slot instead of overwriting the winner.
+pub fn create_ticket(
+    workstream_dir: &Path,
+    title: &str,
+    body: Option<&str>,
+) -> Result<(u32, PathBuf)> {
+    let tickets_dir = workstream_dir.join("tickets");
+    std::fs::create_dir_all(&tickets_dir)
+        .with_context(|| format!("creating {}", tickets_dir.display()))?;
+
+    let content = render_new_ticket(title, body)?;
+    let first = highest_number(workstream_dir) + 1;
+    for number in first..first + RACE_RETRY_LIMIT {
+        let path = ticket_path(workstream_dir, number);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                file.write_all(content.as_bytes())
+                    .with_context(|| format!("writing {}", path.display()))?;
+                return Ok((number, path));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e).with_context(|| format!("creating {}", path.display())),
+        }
+    }
+    bail!(
+        "no free ticket number in {first}..{}",
+        first + RACE_RETRY_LIMIT
+    )
+}
+
+fn render_new_ticket(title: &str, body: Option<&str>) -> Result<String> {
+    #[derive(Serialize)]
+    struct NewFrontmatter<'a> {
+        status: &'a str,
+        title: &'a str,
+    }
+    let fm = toml::to_string(&NewFrontmatter {
+        status: "pending",
+        title,
+    })
+    .context("serializing ticket frontmatter")?;
+    let mut content = format!("+++\n{}\n+++\n", fm.trim_end_matches('\n'));
+    if let Some(body) = body.map(str::trim_end).filter(|b| !b.is_empty()) {
+        content.push('\n');
+        content.push_str(body);
+        content.push('\n');
+    }
+    Ok(content)
 }
 
 #[cfg(test)]
@@ -208,5 +286,76 @@ mod tests {
         let tickets = vec![make_ticket(1)];
         let err = resolve_ticket(&tickets, "abc").unwrap_err();
         assert!(err.to_string().contains("must be numeric"));
+    }
+}
+
+#[cfg(test)]
+mod create_tests {
+    use super::*;
+
+    #[test]
+    fn create_ticket_numbers_sequentially() {
+        let dir = tempfile::tempdir().unwrap();
+        let (n1, p1) = create_ticket(dir.path(), "First", None).unwrap();
+        let (n2, _) = create_ticket(dir.path(), "Second", Some("Body.")).unwrap();
+        assert_eq!((n1, n2), (1, 2));
+        assert!(p1.ends_with("001.md"));
+    }
+
+    #[test]
+    fn create_ticket_writes_frontmatter_and_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, path) = create_ticket(dir.path(), "My ticket", Some("Details.\n\n")).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            content,
+            "+++\nstatus = \"pending\"\ntitle = \"My ticket\"\n+++\n\nDetails.\n"
+        );
+    }
+
+    // The old allocator wrote unconditionally, so a ticket whose frontmatter did
+    // not parse made `add` believe the queue was empty and overwrite 001.
+    #[test]
+    fn create_ticket_does_not_overwrite_an_unparseable_ticket() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("tickets")).unwrap();
+        std::fs::write(dir.path().join("tickets/001.md"), "no frontmatter\n").unwrap();
+
+        let (number, _) = create_ticket(dir.path(), "New", None).unwrap();
+
+        assert_eq!(number, 2);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("tickets/001.md")).unwrap(),
+            "no frontmatter\n"
+        );
+    }
+
+    // Stands in for a racing writer: the slot the allocator is about to claim is
+    // already taken, so it has to move past it rather than clobber it.
+    #[test]
+    fn create_ticket_steps_over_a_taken_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("tickets")).unwrap();
+        std::fs::write(dir.path().join("tickets/003.md"), "squatter\n").unwrap();
+        std::fs::write(dir.path().join("tickets/x.md"), "not a ticket\n").unwrap();
+
+        let (number, _) = create_ticket(dir.path(), "New", None).unwrap();
+
+        assert_eq!(number, 4);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("tickets/003.md")).unwrap(),
+            "squatter\n"
+        );
+    }
+
+    #[test]
+    fn highest_number_ignores_non_numeric_files() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(highest_number(dir.path()), 0);
+        std::fs::create_dir_all(dir.path().join("tickets")).unwrap();
+        std::fs::write(dir.path().join("tickets/007.md"), "").unwrap();
+        std::fs::write(dir.path().join("tickets/notes.md"), "").unwrap();
+        std::fs::write(dir.path().join("tickets/012.txt"), "").unwrap();
+        assert_eq!(highest_number(dir.path()), 7);
     }
 }
