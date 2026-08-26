@@ -38,7 +38,9 @@ Everything after the verb: `<workstream-name> [ticket-number]`
    Use the returned `title` and `content`. If there is no match, run
    `flowy ticket list -w <workstream-name>` to show what exists and stop.
 
-4. **Re-derive the ticket's citations before trusting any of them.** A ticket's
+4. **Give a summary of the ticket to the user**.
+
+5. **Re-derive the ticket's citations before trusting any of them.** A ticket's
    file/line anchors were written at some past commit and go stale silently. If
    the ticket records the commit it was verified at, first check that commit is
    still reachable:
@@ -54,7 +56,7 @@ Everything after the verb: `<workstream-name> [ticket-number]`
    that moved, and any acceptance criterion the current code shows to be wrong,
    rather than silently working around it.
 
-5. **Implement.** Work in the linked worktree from `meta.toml`, following the
+6. **Implement.** Work in the linked worktree from `meta.toml`, following the
    ticket's description. After each meaningful unit of work, commit with a
    concise subject line (under 60 chars).
 
@@ -62,13 +64,13 @@ Everything after the verb: `<workstream-name> [ticket-number]`
    a regression should be attributable to it alone (a shared helper, a guard
    every caller reaches). Land it first, verify, then build on it.
 
-6. **Keep the ticket's Journal up to date** throughout. After each commit:
+7. **Keep the ticket's Journal up to date** throughout. After each commit:
 
    ```
    flowy ticket journal -w <workstream-name> <ticket-number> "<what was done, past tense>" --heading "<brief description>"
    ```
 
-7. **Dispose of incidental findings - default to fixing, not filing.**
+8. **Dispose of incidental findings - default to fixing, not filing.**
    Implementation work surfaces adjacent defects constantly, and a new ticket per
    finding grows the queue faster than it is drained. Take the cheapest
    disposition that does not lose the finding:
@@ -92,7 +94,7 @@ Everything after the verb: `<workstream-name> [ticket-number]`
    which of the three above you think it is and why fixing it in place is not the
    better call.
 
-8. **Report implementation complete and ask the user to test.** The ticket's
+9. **Report implementation complete and ask the user to test.** The ticket's
    journal already holds the detail; this message exists only to get the user to
    the decisions that are theirs. Keep it to three parts:
 
@@ -125,7 +127,7 @@ Everything after the verb: `<workstream-name> [ticket-number]`
    Ask the user to test and confirm the work is correct before marking the
    ticket done. Do **not** run `flowy ticket done` yet.
 
-9. **On user confirmation**, mark it done:
+10. **On user confirmation**, mark it done:
 
    ```
    flowy ticket done -w <workstream-name> <ticket-number> --summary "<summary>"
@@ -145,5 +147,3 @@ Everything after the verb: `<workstream-name> [ticket-number]`
      - <hash> first commit subject
      - <hash> second commit subject
      ```
-
-10. **Report** the ticket path.
