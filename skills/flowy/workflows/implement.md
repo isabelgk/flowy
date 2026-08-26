@@ -119,8 +119,8 @@ Everything after the verb: `<workstream-name> [ticket-number]`
    - List only questions that genuinely need the user's answer and could not be
      settled during implementation: a choice that changes shipping behaviour, an
      acceptance criterion the current code contradicts, something left
-     unimplemented. Anything filed as a ticket was already agreed in step 7 and
-     is not a question here.
+     unimplemented. Anything filed as a ticket was already agreed with the user
+     when the finding was disposed of, and is not a question here.
    - Every question gets a recommendation. Recommend, then wait - do not resolve
      a question that is the user's to answer, and do not act on your own
      recommendation before they answer.
@@ -144,8 +144,8 @@ Everything after the verb: `<workstream-name> [ticket-number]`
    The summary should cover:
    - What was built or changed.
    - Key decisions made during implementation.
-   - Any incidental findings and their disposition per step 7 (fixed in place,
-     written to `notes/knowledge/`, or filed - with the ticket number).
+   - Any incidental findings and their disposition (fixed in place, written to
+     `notes/knowledge/`, or filed - with the ticket number).
    - Any deferred items or open questions, and how each was resolved.
    - A **Commits** subsection listing each commit hash and subject, one per line
      (from `git log --oneline` in the worktree):
