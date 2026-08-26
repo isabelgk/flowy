@@ -13,6 +13,9 @@ project/
     .local/workstream/                # workstream state, colocated with the code
       meta.toml                       # branch + worktree path
       status.md                       # append-only activity log
+      planning.md                     # the current plan, if there is one
+      next.md                         # rolling recommendation
+      milestones/<nnn>-<slug>/        # a plan carried to its goal, frozen
       tickets/
         001.md                        # TOML frontmatter encodes status
   notes/workstreams/archive/<name>/   # archived workstreams, same shape
@@ -103,6 +106,46 @@ EOF
 
 `--body-file` is mutually exclusive with the inline form on each subcommand.
 
+### `flowy notes` (alias: `n`)
+
+Read and write the non-ticket files in a workstream: `planning.md`, `next.md`,
+`status.md`, `meta.toml`, and anything under `milestones/`. Workstream defaults
+to the current git branch, same as `ticket`.
+
+| Subcommand | Description |
+|------------|-------------|
+| `ls` | List the workstream's notes files, marking the absent ones |
+| `path [NAME]` | Print the path to a note, or to the workstream directory |
+| `show <NAME>` | Print a note |
+| `write <NAME>` | Write a note, replacing it if it exists |
+| `append <NAME>` | Append to a note, creating it if absent |
+| `log <TEXT>` | Append a timestamped entry to `status.md` |
+| `milestone <SLUG>` | Freeze `planning.md` and `next.md` under `milestones/<nnn>-<slug>/` |
+
+`NAME` is either an alias (`planning`, `next`, `status`, `meta`) or a path
+relative to the workstream directory (`milestones/001-parser/summary.md`).
+Absolute paths and `..` are refused: the workstream directory is the write
+boundary. `write` and `append` read the body from stdin unless `--body-file
+<PATH>` is given, create parent directories as needed, and refuse an empty body
+rather than truncating a note.
+
+```sh
+flowy notes write planning < plan.md
+flowy notes append planning <<'EOF'
+## Amendment
+The `--fast` path turned out to be unnecessary.
+EOF
+flowy notes log "Planning complete. 4 tickets created."
+```
+
+`milestone` does the mechanical half of a milestone boundary: it picks the next
+number, creates the directory, moves `planning.md` and `next.md` into it (moves,
+not copies, so there is only one live plan), and appends a boundary line to
+`status.md`. Tickets stay where they are, in one numbering sequence for the life
+of the workstream. Writing `summary.md` is left to you. Pending tickets are
+reported rather than treated as an error, since whether an open ticket belongs to
+this milestone or the next one is a judgement call.
+
 ### `flowy migrate`
 
 Move workstream notes from the old `notes/workstreams/<name>/` layout into
@@ -153,9 +196,8 @@ request:
 /flowy close igk-my-feature                    # audit + archive
 ```
 
-`milestone` is the one that has no CLI counterpart. A workstream can outlive
-several plans, and since `plan` overwrites `planning.md`, a plan that reached its
-goal on a branch with more to do has to be frozen before the next one is written;
-`milestone` moves it under `milestones/<nnn>-<slug>/` with a written summary. The
-tickets stay where they are, in one numbering sequence for the life of the
-workstream.
+`milestone` pairs with `flowy notes milestone`: the CLI freezes the plan, and the
+skill decides whether the boundary is real and writes the summary. A workstream
+can outlive several plans, and since `plan` overwrites `planning.md`, a plan that
+reached its goal on a branch with more to do has to be frozen before the next one
+is written.

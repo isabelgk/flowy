@@ -1740,3 +1740,291 @@ fn t_done_summary_from_body_file() {
     assert!(content.contains("## Summary"));
     assert!(content.contains("The \"fast path\" was the fix."));
 }
+
+#[test]
+fn notes_write_then_show() {
+    let repo = TestRepo::new();
+    new_workstream(&repo, "test/branch");
+
+    let plan = "# Goal\n\nShip the `--body-file` flag.\n";
+    repo.cmd()
+        .args(["notes", "write", "-w", "test-branch", "planning"])
+        .write_stdin(plan)
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(repo.ws_dir("test-branch").join("planning.md")).unwrap(),
+        plan
+    );
+
+    let out = repo
+        .cmd()
+        .args(["notes", "show", "-w", "test-branch", "planning"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout), plan);
+}
+
+#[test]
+fn notes_write_creates_nested_paths() {
+    let repo = TestRepo::new();
+    new_workstream(&repo, "test/branch");
+
+    repo.cmd()
+        .args([
+            "notes",
+            "write",
+            "-w",
+            "test-branch",
+            "milestones/001-parser/summary.md",
+        ])
+        .write_stdin("# Milestone 1\n")
+        .assert()
+        .success();
+
+    assert!(
+        repo.ws_dir("test-branch")
+            .join("milestones/001-parser/summary.md")
+            .is_file()
+    );
+}
+
+#[test]
+fn notes_write_rejects_paths_outside_the_workstream() {
+    let repo = TestRepo::new();
+    new_workstream(&repo, "test/branch");
+
+    for name in ["../escaped.md", "/tmp/flowy-escaped.md"] {
+        repo.cmd()
+            .args(["notes", "write", "-w", "test-branch", name])
+            .write_stdin("nope\n")
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("inside the workstream"));
+    }
+
+    assert!(
+        !repo
+            .ws_dir("test-branch")
+            .join("..")
+            .join("escaped.md")
+            .exists()
+    );
+}
+
+#[test]
+fn notes_write_refuses_an_empty_body() {
+    let repo = TestRepo::new();
+    new_workstream(&repo, "test/branch");
+
+    let plan = repo.ws_dir("test-branch").join("planning.md");
+    fs::write(&plan, "the plan\n").unwrap();
+
+    repo.cmd()
+        .args(["notes", "write", "-w", "test-branch", "planning"])
+        .write_stdin("")
+        .assert()
+        .failure();
+
+    assert_eq!(fs::read_to_string(&plan).unwrap(), "the plan\n");
+}
+
+#[test]
+fn notes_append_separates_blocks() {
+    let repo = TestRepo::new();
+    new_workstream(&repo, "test/branch");
+
+    repo.cmd()
+        .args(["notes", "write", "-w", "test-branch", "planning"])
+        .write_stdin("First.")
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["notes", "append", "-w", "test-branch", "planning"])
+        .write_stdin("## Amendment\n\nSecond.")
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(repo.ws_dir("test-branch").join("planning.md")).unwrap(),
+        "First.\n\n## Amendment\n\nSecond.\n"
+    );
+}
+
+#[test]
+fn notes_log_appends_a_timestamped_bullet() {
+    let repo = TestRepo::new();
+    new_workstream(&repo, "test/branch");
+
+    repo.cmd()
+        .args([
+            "notes",
+            "log",
+            "-w",
+            "test-branch",
+            "Planning complete. 4 tickets created.",
+        ])
+        .assert()
+        .success();
+
+    let status = fs::read_to_string(repo.ws_dir("test-branch").join("status.md")).unwrap();
+    let last = status.lines().last().unwrap();
+    assert!(last.starts_with("- 20"), "got {last:?}");
+    assert!(last.ends_with("Planning complete. 4 tickets created."));
+}
+
+#[test]
+fn notes_ls_marks_absent_files() {
+    let repo = TestRepo::new();
+    new_workstream(&repo, "test/branch");
+
+    let output = repo
+        .cmd()
+        .args(["--json", "notes", "ls", "-w", "test-branch"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    let notes = json["notes"].as_array().unwrap();
+    let by_name = |n: &str| {
+        notes
+            .iter()
+            .find(|e| e["name"] == n)
+            .unwrap_or_else(|| panic!("{n} missing from notes ls"))
+            .clone()
+    };
+    assert_eq!(by_name("meta.toml")["exists"], true);
+    assert_eq!(by_name("planning.md")["exists"], false);
+}
+
+#[test]
+fn notes_path_prints_the_workstream_dir() {
+    let repo = TestRepo::new();
+    new_workstream(&repo, "test/branch");
+
+    let out = repo
+        .cmd()
+        .args(["notes", "path", "-w", "test-branch"])
+        .output()
+        .unwrap();
+    let printed = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    assert_eq!(printed, repo.ws_dir("test-branch").display().to_string());
+}
+
+#[test]
+fn notes_milestone_freezes_the_plan_and_keeps_tickets() {
+    let repo = TestRepo::new();
+    new_workstream(&repo, "test/branch");
+    let ws = repo.ws_dir("test-branch");
+
+    fs::write(ws.join("planning.md"), "the plan\n").unwrap();
+    fs::write(ws.join("next.md"), "the board\n").unwrap();
+    repo.cmd()
+        .args(["t", "add", "-w", "test-branch", "Done work"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["t", "done", "-w", "test-branch", "1"])
+        .assert()
+        .success();
+
+    let output = repo
+        .cmd()
+        .args([
+            "--json",
+            "notes",
+            "milestone",
+            "-w",
+            "test-branch",
+            "No Lua",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(json["number"], 1);
+    assert_eq!(json["slug"], "no-lua");
+    assert_eq!(json["pending_tickets"], 0);
+
+    let dir = ws.join("milestones").join("001-no-lua");
+    assert_eq!(
+        fs::read_to_string(dir.join("planning.md")).unwrap(),
+        "the plan\n"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.join("next.md")).unwrap(),
+        "the board\n"
+    );
+    assert!(
+        !ws.join("planning.md").exists(),
+        "the plan must move, not copy"
+    );
+    assert!(!ws.join("next.md").exists());
+    assert!(repo.ticket("test-branch", 1).exists(), "tickets stay put");
+    assert!(
+        fs::read_to_string(ws.join("status.md"))
+            .unwrap()
+            .contains("milestone 001-no-lua frozen")
+    );
+}
+
+#[test]
+fn notes_milestone_numbers_past_the_highest() {
+    let repo = TestRepo::new();
+    new_workstream(&repo, "test/branch");
+    let ws = repo.ws_dir("test-branch");
+
+    fs::create_dir_all(ws.join("milestones").join("001-first")).unwrap();
+    fs::write(ws.join("planning.md"), "the plan\n").unwrap();
+
+    repo.cmd()
+        .args(["notes", "milestone", "-w", "test-branch", "second"])
+        .assert()
+        .success();
+
+    assert!(ws.join("milestones").join("002-second").is_dir());
+}
+
+#[test]
+fn notes_milestone_reports_pending_tickets() {
+    let repo = TestRepo::new();
+    new_workstream(&repo, "test/branch");
+    let ws = repo.ws_dir("test-branch");
+
+    fs::write(ws.join("planning.md"), "the plan\n").unwrap();
+    repo.cmd()
+        .args(["t", "add", "-w", "test-branch", "Still open"])
+        .assert()
+        .success();
+
+    let output = repo
+        .cmd()
+        .args([
+            "--json",
+            "notes",
+            "milestone",
+            "-w",
+            "test-branch",
+            "partial",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["pending_tickets"], 1);
+}
+
+#[test]
+fn notes_milestone_without_a_plan_fails() {
+    let repo = TestRepo::new();
+    new_workstream(&repo, "test/branch");
+
+    repo.cmd()
+        .args(["notes", "milestone", "-w", "test-branch", "nothing"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("nothing to freeze"));
+}

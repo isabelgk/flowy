@@ -23,6 +23,7 @@ pub fn build() -> Command {
         .subcommand(clone_cmd())
         .subcommand(worktree_cmd())
         .subcommand(ticket_cmd())
+        .subcommand(notes_cmd())
         .subcommand(migrate_cmd())
         .subcommand(tui_cmd())
         .subcommand(completions_cmd())
@@ -204,6 +205,75 @@ fn ticket_cmd() -> Command {
             Command::new("status")
                 .visible_alias("st")
                 .about("Show workstream overview"),
+        )
+}
+
+fn notes_cmd() -> Command {
+    Command::new("notes")
+        .visible_alias("n")
+        .about("Read and write a workstream's notes")
+        .arg_required_else_help(true)
+        .arg(
+            Arg::new("workstream")
+                .short('w')
+                .long("workstream")
+                .global(true)
+                .value_name("NAME")
+                .help("Workstream name (default: inferred from git branch)"),
+        )
+        .subcommand(
+            Command::new("ls")
+                .about("List the workstream's notes files")
+                .arg(
+                    Arg::new("all")
+                        .long("all")
+                        .short('a')
+                        .action(ArgAction::SetTrue)
+                        .help("Include milestone directories and other files"),
+                ),
+        )
+        .subcommand(
+            Command::new("path")
+                .about("Print the path to a note, or to the workstream directory")
+                .arg(Arg::new("name").index(1).value_name("NAME")),
+        )
+        .subcommand(
+            Command::new("show")
+                .visible_alias("cat")
+                .about("Print a note")
+                .arg(Arg::new("name").required(true).index(1)),
+        )
+        .subcommand(
+            Command::new("write")
+                .about("Write a note, replacing it if it exists")
+                .arg(Arg::new("name").required(true).index(1))
+                .arg(
+                    Arg::new("body-file")
+                        .long("body-file")
+                        .value_name("PATH")
+                        .help("Read the body from a file (default: stdin)"),
+                ),
+        )
+        .subcommand(
+            Command::new("append")
+                .about("Append to a note, creating it if absent")
+                .arg(Arg::new("name").required(true).index(1))
+                .arg(
+                    Arg::new("body-file")
+                        .long("body-file")
+                        .value_name("PATH")
+                        .help("Read the body from a file (default: stdin)"),
+                ),
+        )
+        .subcommand(
+            Command::new("log")
+                .about("Append a timestamped entry to status.md")
+                .arg(Arg::new("text").required(true).index(1)),
+        )
+        .subcommand(
+            Command::new("milestone")
+                .about("Freeze planning.md and next.md under milestones/<nnn>-<slug>/")
+                .arg(Arg::new("slug").required(true).index(1)),
         )
 }
 

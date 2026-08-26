@@ -4,15 +4,15 @@ use comfy_table::{Cell, Color, ContentArrangement, Table};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use owo_colors::OwoColorize;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::read_body_file;
+use super::{get_repo_root, read_body_file, resolve_workstream};
 use crate::core::{
     meta::read_meta,
-    names::{safe_name, workstream_dir},
-    repo::{cwd_worktree, find_repo_root, worktrees_dir},
+    names::workstream_dir,
+    notes::append_log,
+    repo::{cwd_worktree, worktrees_dir},
     ticket::{Status, Ticket, create_ticket, load_tickets, resolve_ticket, ticket_path},
 };
 use crate::output::print_json;
@@ -31,38 +31,6 @@ pub fn dispatch(matches: &ArgMatches) -> Result<()> {
     }
 }
 
-fn get_repo_root(matches: &ArgMatches) -> Result<PathBuf> {
-    if let Some(path) = matches.get_one::<String>("repo-root") {
-        Ok(PathBuf::from(path))
-    } else {
-        find_repo_root()
-    }
-}
-
-// Resolve workstream name from -w flag, the worktree cwd sits in, or the current
-// git branch. The cwd takes precedence over the branch because a renamed branch
-// no longer names its own worktree directory, and the branch-derived path would
-// point at a directory that does not exist.
-fn resolve_workstream(matches: &ArgMatches, root: &Path) -> Result<(String, PathBuf)> {
-    let name = if let Some(n) = matches.get_one::<String>("workstream") {
-        safe_name(n)
-    } else if let Some(name) = cwd_worktree(root) {
-        name
-    } else {
-        let out = Command::new("git")
-            .args(["branch", "--show-current"])
-            .output()
-            .context("running git branch --show-current")?;
-        let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if branch.is_empty() {
-            bail!("detached HEAD — cannot infer workstream; use -w NAME");
-        }
-        safe_name(&branch)
-    };
-    let dir = workstream_dir(root, &name);
-    Ok((name, dir))
-}
-
 fn filter_tickets(tickets: Vec<Ticket>, filter: &str) -> Vec<Ticket> {
     match filter {
         "all" => tickets,
@@ -79,21 +47,6 @@ fn filter_tickets(tickets: Vec<Ticket>, filter: &str) -> Vec<Ticket> {
             .filter(|t| t.status == Status::Pending)
             .collect(),
     }
-}
-
-fn append_status_entry(ws_dir: &Path, entry: &str) -> Result<()> {
-    let path = ws_dir.join("status.md");
-    let line = format!(
-        "- {} {entry}\n",
-        chrono::Utc::now().format("%Y-%m-%dT%H:%MZ")
-    );
-    std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .with_context(|| format!("opening {}", path.display()))?
-        .write_all(line.as_bytes())?;
-    Ok(())
 }
 
 // Prose for a ticket arrives either inline under `inline_arg` or out of band via
@@ -273,7 +226,7 @@ fn add(matches: &ArgMatches) -> Result<()> {
     let (_, ws_dir) = resolve_workstream(matches, &root)?;
     let (number, path) = create_ticket(&ws_dir, title, body.as_deref())?;
 
-    append_status_entry(&ws_dir, &format!("added {number:03} ({title})"))?;
+    append_log(&ws_dir, &format!("added {number:03} ({title})"))?;
 
     if json {
         return print_json(&serde_json::json!({
@@ -301,8 +254,7 @@ fn done(matches: &ArgMatches) -> Result<()> {
     let content =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
 
-    let new_content =
-        rewrite_status_and_append(&content, reopen, wont_impl, summary.as_deref());
+    let new_content = rewrite_status_and_append(&content, reopen, wont_impl, summary.as_deref());
     std::fs::write(&path, &new_content).with_context(|| format!("writing {}", path.display()))?;
 
     let action = if reopen {
@@ -312,7 +264,7 @@ fn done(matches: &ArgMatches) -> Result<()> {
     } else {
         "done"
     };
-    append_status_entry(&ws_dir, &format!("{action} {:03}", ticket.number))?;
+    append_log(&ws_dir, &format!("{action} {:03}", ticket.number))?;
 
     if json {
         let status_str = if reopen {
