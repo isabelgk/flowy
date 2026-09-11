@@ -282,3 +282,43 @@ fn status_priority_and_journal_match_the_cli_format() {
         .assert()
         .success();
 }
+
+#[test]
+fn the_sidebar_counts_follow_a_mutation() {
+    let repo = repo_with_worktree();
+    let server = Server::start(&repo);
+
+    // Prime the sidebar snapshot, then change the counts behind it.
+    let (_, before) = server.get("/w/feat-web");
+    assert!(before.contains("0/0 open"), "{before}");
+
+    assert_eq!(
+        server
+            .post("/w/feat-web/tickets", &form(&[("title", "Counted")]))
+            .0,
+        303
+    );
+
+    let (_, after) = server.get("/w/feat-web");
+    assert!(after.contains("1/1 open"), "{after}");
+
+    assert_eq!(
+        server
+            .post("/w/feat-web/t/1/status", &form(&[("action", "done")]))
+            .0,
+        303
+    );
+
+    let (_, closed) = server.get("/w/feat-web");
+    assert!(closed.contains("0/1 open"), "{closed}");
+}
+
+#[test]
+fn favicon_is_answered_without_a_page() {
+    let repo = repo_with_worktree();
+    let server = Server::start(&repo);
+
+    let (status, response) = server.get("/favicon.ico");
+    assert_eq!(status, 204);
+    assert!(!response.contains("<html"), "{response}");
+}

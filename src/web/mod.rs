@@ -5,12 +5,14 @@ use anyhow::{Context, Result};
 use maud::Markup;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tiny_http::{Header, Request, Response, Server};
 
 use actions::{BodySave, Form, body_hash};
 use render::{Filters, Nav};
 
-use crate::commands::worktree::list_worktrees;
+use crate::commands::worktree::{WorktreeInfo, list_worktrees};
 use crate::core::{
     names::workstream_dir,
     notes::resolve_note,
@@ -20,6 +22,94 @@ use crate::core::{
 
 // Bodies are small forms; anything larger is a client that has lost its way.
 const MAX_BODY: usize = 1 << 20;
+
+// How long a sidebar snapshot is served before a refresh is kicked off behind
+// the next request.
+const NAV_TTL: Duration = Duration::from_secs(5);
+
+#[derive(Default)]
+struct NavState {
+    snapshot: Option<Vec<WorktreeInfo>>,
+    fetched_at: Option<Instant>,
+    refreshing: bool,
+    // Bumped by every mutation. A refresh that started before the bump lands
+    // with pre-mutation ticket counts, so it drops its result instead.
+    generation: u64,
+}
+
+// The sidebar costs a `git status` per worktree, which dominates the time to
+// render any page and has nothing to do with what the page is showing. Requests
+// serve the last snapshot and let the refresh happen behind them; only the first
+// request of a session, and the first after a mutation, waits for git.
+#[derive(Clone)]
+struct App {
+    root: PathBuf,
+    nav: Arc<Mutex<NavState>>,
+}
+
+impl App {
+    fn new(root: &Path) -> App {
+        App {
+            root: root.to_path_buf(),
+            nav: Arc::new(Mutex::new(NavState::default())),
+        }
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, NavState> {
+        self.nav.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn workstreams(&self) -> Vec<WorktreeInfo> {
+        {
+            let mut state = self.state();
+            if let Some(snapshot) = state.snapshot.clone() {
+                let stale = state.fetched_at.is_none_or(|at| at.elapsed() >= NAV_TTL);
+                if stale && !state.refreshing {
+                    state.refreshing = true;
+                    let app = self.clone();
+                    std::thread::spawn(move || {
+                        app.refresh();
+                    });
+                }
+                return snapshot;
+            }
+        }
+        self.refresh()
+    }
+
+    // Reads git and writes .flowy/cache.json; it never touches a ticket file, so
+    // it can run off the request thread without breaking the serialization that
+    // keeps two mutations from interleaving.
+    fn refresh(&self) -> Vec<WorktreeInfo> {
+        let generation = self.state().generation;
+        let fetched = list_worktrees(&self.root).unwrap_or_default();
+
+        let mut state = self.state();
+        state.refreshing = false;
+        if state.generation == generation {
+            state.snapshot = Some(fetched.clone());
+            state.fetched_at = Some(Instant::now());
+        }
+        fetched
+    }
+
+    // Clearing the snapshot rather than just aging it out makes the next page
+    // recompute synchronously, so ticket counts never lag a mutation the user
+    // just made.
+    fn invalidate_nav(&self) {
+        let mut state = self.state();
+        state.snapshot = None;
+        state.fetched_at = None;
+        state.generation += 1;
+    }
+
+    fn nav(&self, active: Option<&str>) -> Nav {
+        Nav {
+            workstreams: self.workstreams(),
+            active: active.map(str::to_string),
+        }
+    }
+}
 
 pub fn run(root: &Path, host: &str, port: u16, open_browser: bool) -> Result<()> {
     let server =
@@ -39,8 +129,9 @@ pub fn run(root: &Path, host: &str, port: u16, open_browser: bool) -> Result<()>
     // Requests are served one at a time. Every mutation is a read-modify-write of
     // a markdown file, and a single thread is the cheapest way to keep two tabs
     // from interleaving halfway through one.
+    let app = App::new(root);
     for request in server.incoming_requests() {
-        if let Err(e) = serve(root, request) {
+        if let Err(e) = serve(&app, request) {
             eprintln!("flowy web: {e:#}");
         }
     }
@@ -89,7 +180,7 @@ impl Reply {
     }
 }
 
-fn serve(root: &Path, mut request: Request) -> Result<()> {
+fn serve(app: &App, mut request: Request) -> Result<()> {
     let method = request.method().as_str().to_string();
     let url = request.url().to_string();
 
@@ -102,17 +193,19 @@ fn serve(root: &Path, mut request: Request) -> Result<()> {
             .context("reading request body")?;
     }
 
-    let reply = match route_reply(root, &method, &url, &body, &request) {
+    let reply = match route_reply(app, &method, &url, &body, &request) {
         Ok(reply) => reply,
         Err(e) => Reply::with_status(
             400,
-            render::message(
-                &nav_for(root, None),
-                "Something went wrong",
-                &format!("{e:#}"),
-            ),
+            render::message(&app.nav(None), "Something went wrong", &format!("{e:#}")),
         ),
     };
+
+    // Any accepted POST can move a ticket count in the sidebar, so the snapshot
+    // the next page renders from has to be rebuilt rather than served stale.
+    if method == "POST" && reply.status == 303 {
+        app.invalidate_nav();
+    }
 
     let mut response = Response::from_string(reply.body).with_status_code(reply.status);
     response.add_header(
@@ -128,13 +221,7 @@ fn serve(root: &Path, mut request: Request) -> Result<()> {
     request.respond(response).context("writing response")
 }
 
-fn route_reply(
-    root: &Path,
-    method: &str,
-    url: &str,
-    body: &str,
-    request: &Request,
-) -> Result<Reply> {
+fn route_reply(app: &App, method: &str, url: &str, body: &str, request: &Request) -> Result<Reply> {
     let (path, query) = url.split_once('?').unwrap_or((url, ""));
     let route = parse_route(method, path);
 
@@ -142,7 +229,7 @@ fn route_reply(
         return Ok(Reply::with_status(
             403,
             render::message(
-                &nav_for(root, None),
+                &app.nav(None),
                 "Blocked",
                 "That POST did not come from this page. flowy web only accepts \
                  same-origin form submissions.",
@@ -151,42 +238,49 @@ fn route_reply(
     }
 
     match route {
-        Route::Index => index(root),
-        Route::Workstream(name) => workstream(root, &name, query),
-        Route::Ticket(name, number) => ticket(root, &name, number),
-        Route::EditTicket(name, number) => edit_ticket(root, &name, number, query),
-        Route::Note(name, note) => show_note(root, &name, &note),
+        // Browsers ask for this alongside every page. Answering with an empty
+        // 204 keeps it off the path that reads git.
+        Route::Favicon => Ok(Reply {
+            status: 204,
+            body: String::new(),
+            location: None,
+        }),
+        Route::Index => index(app),
+        Route::Workstream(name) => workstream(app, &name, query),
+        Route::Ticket(name, number) => ticket(app, &name, number),
+        Route::EditTicket(name, number) => edit_ticket(app, &name, number, query),
+        Route::Note(name, note) => show_note(app, &name, &note),
         Route::AddTicket(name) => {
-            let Some(ws_dir) = writable_workstream(root, &name)? else {
-                return Ok(no_workstream(root, &name));
+            let Some(ws_dir) = writable_workstream(&app.root, &name)? else {
+                return Ok(no_workstream(app, &name));
             };
             let number = actions::add_ticket(&ws_dir, &Form::parse(body))?;
             Ok(Reply::redirect(format!("/w/{name}/t/{number}")))
         }
         Route::SetStatus(name, number) => {
-            let Some(ws_dir) = writable_workstream(root, &name)? else {
-                return Ok(no_workstream(root, &name));
+            let Some(ws_dir) = writable_workstream(&app.root, &name)? else {
+                return Ok(no_workstream(app, &name));
             };
             actions::set_status(&ws_dir, number, &Form::parse(body))?;
             Ok(Reply::redirect(format!("/w/{name}/t/{number}")))
         }
         Route::SetPriority(name, number) => {
-            let Some(ws_dir) = writable_workstream(root, &name)? else {
-                return Ok(no_workstream(root, &name));
+            let Some(ws_dir) = writable_workstream(&app.root, &name)? else {
+                return Ok(no_workstream(app, &name));
             };
             actions::set_priority(&ws_dir, number, &Form::parse(body))?;
             Ok(Reply::redirect(format!("/w/{name}/t/{number}")))
         }
         Route::AddJournal(name, number) => {
-            let Some(ws_dir) = writable_workstream(root, &name)? else {
-                return Ok(no_workstream(root, &name));
+            let Some(ws_dir) = writable_workstream(&app.root, &name)? else {
+                return Ok(no_workstream(app, &name));
             };
             actions::add_journal(&ws_dir, number, &Form::parse(body))?;
             Ok(Reply::redirect(format!("/w/{name}/t/{number}")))
         }
         Route::SetBody(name, number) => {
-            let Some(ws_dir) = writable_workstream(root, &name)? else {
-                return Ok(no_workstream(root, &name));
+            let Some(ws_dir) = writable_workstream(&app.root, &name)? else {
+                return Ok(no_workstream(app, &name));
             };
             match actions::set_body(&ws_dir, number, &Form::parse(body))? {
                 BodySave::Saved => Ok(Reply::redirect(format!("/w/{name}/t/{number}"))),
@@ -197,7 +291,7 @@ fn route_reply(
         }
         Route::NotFound => Ok(Reply::with_status(
             404,
-            render::message(&nav_for(root, None), "Not found", url),
+            render::message(&app.nav(None), "Not found", url),
         )),
     }
 }
@@ -228,6 +322,7 @@ enum Route {
     Ticket(String, u32),
     EditTicket(String, u32),
     Note(String, String),
+    Favicon,
     AddTicket(String),
     SetStatus(String, u32),
     SetPriority(String, u32),
@@ -253,6 +348,7 @@ fn parse_route(method: &str, path: &str) -> Route {
 
     match (method, parts.as_slice()) {
         ("GET", []) => Route::Index,
+        ("GET", ["favicon.ico"]) => Route::Favicon,
         ("GET", ["w", name]) => Route::Workstream(name.to_string()),
         ("GET", ["w", name, "t", id]) => match number(id) {
             Some(n) => Route::Ticket(name.to_string(), n),
@@ -275,15 +371,6 @@ fn parse_route(method: &str, path: &str) -> Route {
     }
 }
 
-fn nav_for(root: &Path, active: Option<&str>) -> Nav {
-    // The sidebar is decoration: a workstream that git cannot enumerate should
-    // not take the page down with it.
-    Nav {
-        workstreams: list_worktrees(root).unwrap_or_default(),
-        active: active.map(str::to_string),
-    }
-}
-
 fn live_workstream(root: &Path, name: &str) -> Option<PathBuf> {
     worktrees_dir(root)
         .join(name)
@@ -301,33 +388,33 @@ fn writable_workstream(root: &Path, name: &str) -> Result<Option<PathBuf>> {
     Ok(Some(dir))
 }
 
-fn no_workstream(root: &Path, name: &str) -> Reply {
+fn no_workstream(app: &App, name: &str) -> Reply {
     Reply::with_status(
         404,
         render::message(
-            &nav_for(root, None),
+            &app.nav(None),
             "No such workstream",
             &format!("This repo has no worktree named {name}."),
         ),
     )
 }
 
-fn no_ticket(root: &Path, name: &str, number: u32) -> Reply {
+fn no_ticket(app: &App, name: &str, number: u32) -> Reply {
     Reply::with_status(
         404,
         render::message(
-            &nav_for(root, Some(name)),
+            &app.nav(Some(name)),
             "No such ticket",
             &format!("{name} has no ticket {number:03}."),
         ),
     )
 }
 
-fn index(root: &Path) -> Result<Reply> {
-    if let Some(name) = cwd_worktree(root) {
+fn index(app: &App) -> Result<Reply> {
+    if let Some(name) = cwd_worktree(&app.root) {
         return Ok(Reply::redirect(format!("/w/{name}")));
     }
-    let nav = nav_for(root, None);
+    let nav = app.nav(None);
     match nav.workstreams.first() {
         Some(ws) => Ok(Reply::redirect(format!("/w/{}", ws.name))),
         None => Ok(Reply::html(render::message(
@@ -338,9 +425,9 @@ fn index(root: &Path) -> Result<Reply> {
     }
 }
 
-fn workstream(root: &Path, name: &str, query: &str) -> Result<Reply> {
-    let Some(ws_dir) = live_workstream(root, name) else {
-        return Ok(no_workstream(root, name));
+fn workstream(app: &App, name: &str, query: &str) -> Result<Reply> {
+    let Some(ws_dir) = live_workstream(&app.root, name) else {
+        return Ok(no_workstream(app, name));
     };
     let params = Form::parse(query);
     let status = match params.filled("status") {
@@ -366,7 +453,7 @@ fn workstream(root: &Path, name: &str, query: &str) -> Result<Reply> {
         })
         .collect::<Vec<_>>();
 
-    let nav = nav_for(root, Some(name));
+    let nav = app.nav(Some(name));
     let filters = Filters {
         status: &status,
         priority: &priority,
@@ -377,30 +464,30 @@ fn workstream(root: &Path, name: &str, query: &str) -> Result<Reply> {
     )))
 }
 
-fn ticket(root: &Path, name: &str, number: u32) -> Result<Reply> {
-    let Some(ws_dir) = live_workstream(root, name) else {
-        return Ok(no_workstream(root, name));
+fn ticket(app: &App, name: &str, number: u32) -> Result<Reply> {
+    let Some(ws_dir) = live_workstream(&app.root, name) else {
+        return Ok(no_workstream(app, name));
     };
     let path = ticket_path(&ws_dir, number);
     if !path.exists() {
-        return Ok(no_ticket(root, name, number));
+        return Ok(no_ticket(app, name, number));
     }
     let ticket = parse_ticket(&path)?;
-    let nav = nav_for(root, Some(name));
+    let nav = app.nav(Some(name));
     Ok(Reply::html(render::ticket_detail(&nav, name, &ticket)))
 }
 
-fn edit_ticket(root: &Path, name: &str, number: u32, query: &str) -> Result<Reply> {
-    let Some(ws_dir) = live_workstream(root, name) else {
-        return Ok(no_workstream(root, name));
+fn edit_ticket(app: &App, name: &str, number: u32, query: &str) -> Result<Reply> {
+    let Some(ws_dir) = live_workstream(&app.root, name) else {
+        return Ok(no_workstream(app, name));
     };
     let path = ticket_path(&ws_dir, number);
     if !path.exists() {
-        return Ok(no_ticket(root, name, number));
+        return Ok(no_ticket(app, name, number));
     }
     let ticket = parse_ticket(&path)?;
     let conflict = Form::parse(query).get("conflict") == "1";
-    let nav = nav_for(root, Some(name));
+    let nav = app.nav(Some(name));
     Ok(Reply::html(render::ticket_edit(
         &nav,
         name,
@@ -410,12 +497,12 @@ fn edit_ticket(root: &Path, name: &str, number: u32, query: &str) -> Result<Repl
     )))
 }
 
-fn show_note(root: &Path, name: &str, note: &str) -> Result<Reply> {
-    let Some(ws_dir) = live_workstream(root, name) else {
-        return Ok(no_workstream(root, name));
+fn show_note(app: &App, name: &str, note: &str) -> Result<Reply> {
+    let Some(ws_dir) = live_workstream(&app.root, name) else {
+        return Ok(no_workstream(app, name));
     };
     let path = resolve_note(&ws_dir, note)?;
-    let nav = nav_for(root, Some(name));
+    let nav = app.nav(Some(name));
     let label = path
         .file_name()
         .map(|f| f.to_string_lossy().into_owned())
@@ -442,6 +529,11 @@ fn show_note(root: &Path, name: &str, note: &str) -> Result<Reply> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn favicon_has_its_own_route() {
+        assert_eq!(parse_route("GET", "/favicon.ico"), Route::Favicon);
+    }
 
     #[test]
     fn routes_cover_the_get_pages() {

@@ -270,7 +270,7 @@ fn new(matches: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct WorktreeInfo {
     pub name: String,
     // The worktree's own path, so consumers resolve notes from where they

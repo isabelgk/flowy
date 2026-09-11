@@ -203,6 +203,11 @@ Mutations are written through the same code the CLI uses and logged to
 
 Archived workstreams are not served; unarchive one to see it.
 
+The sidebar costs a `git status` per worktree, which on a large repo dominates
+the time to render any page. Pages serve the last sidebar snapshot and refresh
+it behind the request, so only the first page of a session waits for git; a
+mutation clears the snapshot so ticket counts never lag an edit you just made.
+
 The server binds `127.0.0.1` and serves a single repo. POSTs are accepted only
 with an `Origin` matching the server's own, so a page in another tab cannot file
 or close tickets through your browser. Requests are handled one at a time, which
