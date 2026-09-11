@@ -277,7 +277,11 @@ fn render_help(f: &mut Frame, app: &App, area: Rect) {
             Span::styled("i", key_style),
             Span::raw(" search  "),
             Span::styled("o", key_style),
-            Span::raw(" open only  "),
+            Span::raw(if app.pending_only {
+                " show all  "
+            } else {
+                " open only  "
+            }),
             Span::styled("enter", key_style),
             Span::raw(" edit  "),
             Span::styled("q / C-c", key_style),

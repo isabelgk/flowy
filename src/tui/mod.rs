@@ -106,7 +106,7 @@ impl App {
         self.tickets = load_tui_tickets(ws_dir);
         self.ticket_selected = 0;
         self.query.clear();
-        self.pending_only = false;
+        self.pending_only = true;
         self.ticket_offset = 0;
         self.input_mode = InputMode::Normal;
     }
@@ -392,7 +392,7 @@ pub fn run(root: &Path) -> Result<()> {
         worktrees: None,
         worktree_preview: Vec::new(),
         query: String::new(),
-        pending_only: false,
+        pending_only: true,
         ticket_selected: 0,
         worktree_selected: 0,
         ticket_offset: 0,
@@ -481,7 +481,7 @@ mod tests {
             worktrees: Some(Vec::new()),
             worktree_preview: Vec::new(),
             query: String::new(),
-            pending_only: false,
+            pending_only: true,
             ticket_selected: 0,
             worktree_selected: 0,
             ticket_offset: 0,
@@ -582,16 +582,18 @@ mod tests {
         let mut app = app_with_tickets(3);
         app.tickets[1].status = Status::Complete;
         app.tickets[2].status = Status::WontImplement;
-        app.ticket_selected = 2;
-
-        app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
-        assert!(app.pending_only);
+        assert!(app.pending_only, "the filter starts on");
         assert_eq!(app.filtered_tickets(), vec![0]);
-        assert_eq!(app.ticket_selected, 0);
 
         app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
         assert!(!app.pending_only);
         assert_eq!(app.filtered_tickets(), vec![0, 1, 2]);
+
+        app.ticket_selected = 2;
+        app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+        assert!(app.pending_only);
+        assert_eq!(app.filtered_tickets(), vec![0]);
+        assert_eq!(app.ticket_selected, 0);
     }
 
     #[test]
