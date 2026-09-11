@@ -174,6 +174,36 @@ each through to the file. The list opens filtered to pending tickets; `o`
 toggles completed and wont-implement tickets back in, and composes with the `i`
 search filter.
 
+### `flowy web`
+
+Serve a browser UI for the repo's workstreams over HTTP.
+
+```sh
+flowy web                      # http://127.0.0.1:8787
+flowy web --port 9000 --open   # pick a port and open a browser
+```
+
+The sidebar lists live worktrees; each one gets a filterable ticket list, a
+detail page rendering the ticket's markdown, and forms for the same mutations
+the CLI performs - add, done, won't-implement, reopen, priority, and journal.
+`Edit body` opens a textarea over the markdown below the frontmatter; title,
+status, and priority stay owned by their own forms so a save cannot corrupt the
+fields every other command parses. A save carries a hash of the body it was
+opened with and is refused if the file changed meanwhile, so a browser tab left
+open overnight cannot overwrite what `ticket edit` or an agent wrote in the
+interim.
+
+Mutations are written through the same code the CLI uses and logged to
+`status.md`, with one addition: a body edit logs `edited <id>`, which
+`ticket edit` does not, because an edit made in a browser is otherwise invisible.
+
+Archived workstreams are not served; unarchive one to see it.
+
+The server binds `127.0.0.1` and serves a single repo. POSTs are accepted only
+with an `Origin` matching the server's own, so a page in another tab cannot file
+or close tickets through your browser. Requests are handled one at a time, which
+keeps two tabs from interleaving inside a read-modify-write of a ticket file.
+
 ### `flowy completions <shell>`
 
 Generate shell completions. Supported shells: `bash`, `zsh`, `fish`,

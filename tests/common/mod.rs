@@ -1,3 +1,6 @@
+// Shared by several test binaries; each uses a different subset.
+#![allow(dead_code)]
+
 use assert_cmd::Command;
 use std::path::{Path, PathBuf};
 use std::process;

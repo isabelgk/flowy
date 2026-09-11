@@ -23,6 +23,15 @@ pub fn dispatch(matches: ArgMatches) -> Result<()> {
         Some(("ticket", sub)) => ticket::dispatch(sub),
         Some(("notes", sub)) => notes::dispatch(sub),
         Some(("migrate", sub)) => migrate::run(sub),
+        Some(("web", sub)) => {
+            let root = get_repo_root(&matches)?;
+            crate::web::run(
+                &root,
+                sub.get_one::<String>("host").expect("host has a default"),
+                *sub.get_one::<u16>("port").expect("port has a default"),
+                sub.get_flag("open"),
+            )
+        }
         Some(("tui", _)) | None => {
             let root = if let Some(p) = matches.get_one::<String>("repo-root") {
                 PathBuf::from(p)

@@ -28,6 +28,7 @@ pub fn build() -> Command {
         .subcommand(notes_cmd())
         .subcommand(migrate_cmd())
         .subcommand(tui_cmd())
+        .subcommand(web_cmd())
         .subcommand(completions_cmd())
 }
 
@@ -320,6 +321,33 @@ fn migrate_cmd() -> Command {
 
 fn tui_cmd() -> Command {
     Command::new("tui").about("Launch the interactive terminal UI")
+}
+
+fn web_cmd() -> Command {
+    Command::new("web")
+        .about("Serve the workstream browser over HTTP")
+        .arg(
+            Arg::new("port")
+                .long("port")
+                .short('p')
+                .value_name("PORT")
+                .value_parser(clap::value_parser!(u16))
+                .default_value("8787")
+                .help("Port to listen on (0 picks a free one)"),
+        )
+        .arg(
+            Arg::new("host")
+                .long("host")
+                .value_name("HOST")
+                .default_value("127.0.0.1")
+                .help("Address to bind"),
+        )
+        .arg(
+            Arg::new("open")
+                .long("open")
+                .action(ArgAction::SetTrue)
+                .help("Open the served URL in a browser"),
+        )
 }
 
 fn completions_cmd() -> Command {
