@@ -278,6 +278,103 @@ pub fn rewrite_priority(content: &str, priority: Priority) -> Result<String> {
     Ok(format!("+++\n{}\n+++\n{body}", fm.join("\n")))
 }
 
+// The `done` / `--reopen` / `--wont-implement` rewrite: replaces the status key
+// and appends a Summary section if the ticket does not already have one.
+pub fn rewrite_status_and_append(
+    content: &str,
+    reopen: bool,
+    wont_impl: bool,
+    summary: Option<&str>,
+) -> String {
+    let new_status = if reopen {
+        "pending"
+    } else if wont_impl {
+        "wont-implement"
+    } else {
+        "complete"
+    };
+
+    let result = if let Some(stripped) = content.strip_prefix("+++\n") {
+        if let Some(end) = stripped.find("\n+++\n") {
+            let fm = &stripped[..end];
+            let new_fm: String = fm
+                .lines()
+                .map(|l| {
+                    if l.starts_with("status =") {
+                        format!("status = \"{new_status}\"")
+                    } else {
+                        l.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let after = &stripped[end + 5..];
+            format!("+++\n{new_fm}\n+++\n{after}")
+        } else {
+            format!("+++\nstatus = \"{new_status}\"\n+++\n{content}")
+        }
+    } else {
+        format!("+++\nstatus = \"{new_status}\"\n+++\n{content}")
+    };
+
+    if let Some(s) = summary {
+        let already_has_summary =
+            result.contains("\n## Summary\n") || result.starts_with("## Summary\n");
+        if already_has_summary {
+            result
+        } else if result.ends_with('\n') {
+            format!("{result}\n## Summary\n\n{s}\n")
+        } else {
+            format!("{result}\n\n## Summary\n\n{s}\n")
+        }
+    } else {
+        result
+    }
+}
+
+// Returns the rewritten ticket and the RFC 3339 timestamp stamped on the entry,
+// which callers report back to the user.
+pub fn append_journal(content: &str, text: &str, heading: Option<&str>) -> (String, String) {
+    let mut content = content.to_string();
+    if !content.contains("\n## Journal\n") && !content.starts_with("## Journal\n") {
+        if !content.ends_with('\n') {
+            content.push('\n');
+        }
+        content.push_str("\n## Journal\n");
+    }
+
+    let ts = chrono::Utc::now().to_rfc3339();
+    let header = match heading {
+        Some(h) => format!("### [{ts}] {h}"),
+        None => format!("### [{ts}]"),
+    };
+    content.push_str(&format!("\n{header}\n\n{}\n", text.trim_end()));
+    (content, ts)
+}
+
+// Replaces everything below the frontmatter, matching the spacing `create_ticket`
+// writes so a round trip through an editor leaves the file unchanged.
+pub fn rewrite_body(content: &str, body: &str) -> Result<String> {
+    let stripped = content
+        .strip_prefix("+++\n")
+        .ok_or_else(|| anyhow::anyhow!("ticket has no frontmatter"))?;
+    let end = stripped
+        .find("\n+++\n")
+        .ok_or_else(|| anyhow::anyhow!("ticket has malformed frontmatter (no closing +++)"))?;
+    let fm = &stripped[..end];
+
+    let body = body.replace("\r\n", "\n");
+    // parse_ticket hands back the body with the blank line that follows the
+    // frontmatter still attached, so a round trip has to drop it before the
+    // rewrite puts it back.
+    let body = body.trim_start_matches('\n').trim_end();
+    if body.is_empty() {
+        Ok(format!("+++\n{fm}\n+++\n"))
+    } else {
+        Ok(format!("+++\n{fm}\n+++\n\n{body}\n"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -477,6 +574,7 @@ mod tests {
 #[cfg(test)]
 mod create_tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn create_ticket_numbers_sequentially() {
@@ -558,5 +656,105 @@ mod create_tests {
         std::fs::write(dir.path().join("tickets/notes.md"), "").unwrap();
         std::fs::write(dir.path().join("tickets/012.txt"), "").unwrap();
         assert_eq!(highest_number(dir.path()), 7);
+    }
+
+    #[test]
+    fn rewrite_status_pending_to_complete() {
+        let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n";
+        let out = rewrite_status_and_append(input, false, false, None);
+        assert_eq!(
+            out,
+            "+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n"
+        );
+    }
+
+    #[test]
+    fn rewrite_status_complete_with_summary() {
+        let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n";
+        let out = rewrite_status_and_append(input, false, false, Some("Done"));
+        assert!(out.starts_with("+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n"));
+        assert!(out.contains("\n## Summary\n\nDone\n"));
+    }
+
+    #[test]
+    fn rewrite_status_pending_to_wont_implement() {
+        let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n";
+        let out = rewrite_status_and_append(input, false, true, None);
+        assert_eq!(
+            out,
+            "+++\nstatus = \"wont-implement\"\ntitle = \"My Task\"\n+++\n"
+        );
+    }
+
+    #[test]
+    fn rewrite_status_complete_to_reopen() {
+        let input = "+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n";
+        let out = rewrite_status_and_append(input, true, false, None);
+        assert_eq!(out, "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n");
+    }
+
+    #[test]
+    fn rewrite_status_wont_implement_to_reopen() {
+        let input = "+++\nstatus = \"wont-implement\"\ntitle = \"My Task\"\n+++\n";
+        let out = rewrite_status_and_append(input, true, false, None);
+        assert_eq!(out, "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n");
+    }
+
+    #[test]
+    fn rewrite_status_multiline_body_preserved() {
+        let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n\nSome body text.\n\n## Section\n\nMore content.\n";
+        let out = rewrite_status_and_append(input, false, false, None);
+        assert!(out.starts_with("+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n"));
+        assert!(out.contains("Some body text."));
+        assert!(out.contains("## Section"));
+    }
+
+    #[test]
+    fn append_journal_creates_section_then_reuses_it() {
+        let input = "+++\nstatus = \"pending\"\ntitle = \"T\"\n+++\n\nBody.\n";
+        let (once, _) = append_journal(input, "first", None);
+        assert_eq!(once.matches("\n## Journal\n").count(), 1);
+        let (twice, _) = append_journal(&once, "second", Some("a heading"));
+        assert_eq!(twice.matches("\n## Journal\n").count(), 1);
+        assert!(twice.contains("] a heading\n"));
+        assert!(twice.contains("first"));
+        assert!(twice.contains("second"));
+    }
+
+    #[test]
+    fn rewrite_body_preserves_frontmatter() {
+        let input = "+++\nstatus = \"pending\"\ntitle = \"T\"\npriority = \"high\"\n+++\n\nOld.\n";
+        let out = rewrite_body(input, "New body.").unwrap();
+        assert_eq!(
+            out,
+            "+++\nstatus = \"pending\"\ntitle = \"T\"\npriority = \"high\"\n+++\n\nNew body.\n"
+        );
+    }
+
+    #[test]
+    fn rewrite_body_round_trips_parsed_content() {
+        let input = "+++\nstatus = \"pending\"\ntitle = \"T\"\n+++\n\nBody.\n";
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("001.md");
+        fs::write(&path, input).unwrap();
+        let parsed = parse_ticket(&path).unwrap();
+        assert_eq!(rewrite_body(input, &parsed.content).unwrap(), input);
+    }
+
+    #[test]
+    fn rewrite_body_normalizes_crlf_from_a_browser_textarea() {
+        let input = "+++\nstatus = \"pending\"\ntitle = \"T\"\n+++\n";
+        let out = rewrite_body(input, "one\r\ntwo\r\n").unwrap();
+        assert_eq!(
+            out,
+            "+++\nstatus = \"pending\"\ntitle = \"T\"\n+++\n\none\ntwo\n"
+        );
+    }
+
+    #[test]
+    fn rewrite_body_empty_leaves_frontmatter_only() {
+        let input = "+++\nstatus = \"pending\"\ntitle = \"T\"\n+++\n\nOld.\n";
+        let out = rewrite_body(input, "   \n").unwrap();
+        assert_eq!(out, "+++\nstatus = \"pending\"\ntitle = \"T\"\n+++\n");
     }
 }

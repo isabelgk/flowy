@@ -14,8 +14,8 @@ use crate::core::{
     notes::append_log,
     repo::{cwd_worktree, worktrees_dir},
     ticket::{
-        Priority, Status, Ticket, create_ticket, load_tickets, resolve_ticket, ticket_path,
-        write_priority,
+        Priority, Status, Ticket, append_journal, create_ticket, load_tickets, resolve_ticket,
+        rewrite_status_and_append, ticket_path, write_priority,
     },
 };
 use crate::output::print_json;
@@ -321,58 +321,6 @@ fn done(matches: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-fn rewrite_status_and_append(
-    content: &str,
-    reopen: bool,
-    wont_impl: bool,
-    summary: Option<&str>,
-) -> String {
-    let new_status = if reopen {
-        "pending"
-    } else if wont_impl {
-        "wont-implement"
-    } else {
-        "complete"
-    };
-
-    let result = if let Some(stripped) = content.strip_prefix("+++\n") {
-        if let Some(end) = stripped.find("\n+++\n") {
-            let fm = &stripped[..end];
-            let new_fm: String = fm
-                .lines()
-                .map(|l| {
-                    if l.starts_with("status =") {
-                        format!("status = \"{new_status}\"")
-                    } else {
-                        l.to_string()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            let after = &stripped[end + 5..];
-            format!("+++\n{new_fm}\n+++\n{after}")
-        } else {
-            format!("+++\nstatus = \"{new_status}\"\n+++\n{content}")
-        }
-    } else {
-        format!("+++\nstatus = \"{new_status}\"\n+++\n{content}")
-    };
-
-    if let Some(s) = summary {
-        let already_has_summary =
-            result.contains("\n## Summary\n") || result.starts_with("## Summary\n");
-        if already_has_summary {
-            result
-        } else if result.ends_with('\n') {
-            format!("{result}\n## Summary\n\n{s}\n")
-        } else {
-            format!("{result}\n\n## Summary\n\n{s}\n")
-        }
-    } else {
-        result
-    }
-}
-
 fn priority(matches: &ArgMatches) -> Result<()> {
     let root = get_repo_root(matches)?;
     let json = matches.get_flag("json");
@@ -412,24 +360,10 @@ fn journal(matches: &ArgMatches) -> Result<()> {
     let ticket = resolve_ticket(&tickets, id)?;
 
     let path = ticket_path(&ws_dir, ticket.number);
-    let mut content =
+    let content =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
 
-    // Create ## Journal section if absent
-    if !content.contains("\n## Journal\n") && !content.starts_with("## Journal\n") {
-        if !content.ends_with('\n') {
-            content.push('\n');
-        }
-        content.push_str("\n## Journal\n");
-    }
-
-    let ts = chrono::Utc::now().to_rfc3339();
-    let header = match heading {
-        Some(h) => format!("### [{ts}] {h}"),
-        None => format!("### [{ts}]"),
-    };
-    content.push_str(&format!("\n{header}\n\n{}\n", text.trim_end()));
-
+    let (content, ts) = append_journal(&content, &text, heading.map(String::as_str));
     std::fs::write(&path, &content).with_context(|| format!("writing {}", path.display()))?;
 
     if json {
@@ -802,56 +736,5 @@ mod tests {
             vec![1, 3]
         );
         assert_eq!(filter_by_priority(tickets, None).len(), 3);
-    }
-
-    #[test]
-    fn rewrite_status_pending_to_complete() {
-        let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n";
-        let out = rewrite_status_and_append(input, false, false, None);
-        assert_eq!(
-            out,
-            "+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n"
-        );
-    }
-
-    #[test]
-    fn rewrite_status_complete_with_summary() {
-        let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n";
-        let out = rewrite_status_and_append(input, false, false, Some("Done"));
-        assert!(out.starts_with("+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n"));
-        assert!(out.contains("\n## Summary\n\nDone\n"));
-    }
-
-    #[test]
-    fn rewrite_status_pending_to_wont_implement() {
-        let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n";
-        let out = rewrite_status_and_append(input, false, true, None);
-        assert_eq!(
-            out,
-            "+++\nstatus = \"wont-implement\"\ntitle = \"My Task\"\n+++\n"
-        );
-    }
-
-    #[test]
-    fn rewrite_status_complete_to_reopen() {
-        let input = "+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n";
-        let out = rewrite_status_and_append(input, true, false, None);
-        assert_eq!(out, "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n");
-    }
-
-    #[test]
-    fn rewrite_status_wont_implement_to_reopen() {
-        let input = "+++\nstatus = \"wont-implement\"\ntitle = \"My Task\"\n+++\n";
-        let out = rewrite_status_and_append(input, true, false, None);
-        assert_eq!(out, "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n");
-    }
-
-    #[test]
-    fn rewrite_status_multiline_body_preserved() {
-        let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n\nSome body text.\n\n## Section\n\nMore content.\n";
-        let out = rewrite_status_and_append(input, false, false, None);
-        assert!(out.starts_with("+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n"));
-        assert!(out.contains("Some body text."));
-        assert!(out.contains("## Section"));
     }
 }
