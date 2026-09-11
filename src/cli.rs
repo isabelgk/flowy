@@ -1,5 +1,7 @@
 use clap::{Arg, ArgAction, Command};
 
+use crate::core::ticket::Priority;
+
 pub fn build() -> Command {
     Command::new("flowy")
         .version(clap::crate_version!())
@@ -123,6 +125,14 @@ fn ticket_cmd() -> Command {
                         .value_name("STATUS")
                         .default_value("pending")
                         .help("Filter by status: pending, complete, wont-implement, all"),
+                )
+                .arg(
+                    Arg::new("priority")
+                        .long("priority")
+                        .short('p')
+                        .value_name("LEVEL")
+                        .value_parser(Priority::VALUES)
+                        .help("Only show tickets of this priority"),
                 ),
         )
         .subcommand(
@@ -136,6 +146,14 @@ fn ticket_cmd() -> Command {
                 .visible_alias("a")
                 .about("Create a new ticket")
                 .arg(Arg::new("title").required(true).index(1))
+                .arg(
+                    Arg::new("priority")
+                        .long("priority")
+                        .short('p')
+                        .value_name("LEVEL")
+                        .value_parser(Priority::VALUES)
+                        .help("Priority ranking (default: medium)"),
+                )
                 .arg(
                     Arg::new("description")
                         .long("description")
@@ -169,6 +187,18 @@ fn ticket_cmd() -> Command {
                         .action(ArgAction::SetTrue),
                 )
                 .arg(Arg::new("reopen").long("reopen").action(ArgAction::SetTrue)),
+        )
+        .subcommand(
+            Command::new("priority")
+                .visible_alias("p")
+                .about("Set a ticket's priority")
+                .arg(Arg::new("id").required(true).index(1))
+                .arg(
+                    Arg::new("level")
+                        .required(true)
+                        .index(2)
+                        .value_parser(Priority::VALUES),
+                ),
         )
         .subcommand(
             Command::new("journal")

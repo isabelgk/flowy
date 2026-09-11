@@ -13,7 +13,10 @@ use crate::core::{
     names::workstream_dir,
     notes::append_log,
     repo::{cwd_worktree, worktrees_dir},
-    ticket::{Status, Ticket, create_ticket, load_tickets, resolve_ticket, ticket_path},
+    ticket::{
+        Priority, Status, Ticket, create_ticket, load_tickets, resolve_ticket, ticket_path,
+        write_priority,
+    },
 };
 use crate::output::print_json;
 
@@ -23,6 +26,7 @@ pub fn dispatch(matches: &ArgMatches) -> Result<()> {
         Some(("show", sub)) => show(sub),
         Some(("add", sub)) => add(sub),
         Some(("done", sub)) => done(sub),
+        Some(("priority", sub)) => priority(sub),
         Some(("journal", sub)) => journal(sub),
         Some(("edit", sub)) => edit(sub),
         Some(("search", sub)) => search(sub),
@@ -49,6 +53,20 @@ fn filter_tickets(tickets: Vec<Ticket>, filter: &str) -> Vec<Ticket> {
     }
 }
 
+fn filter_by_priority(tickets: Vec<Ticket>, priority: Option<Priority>) -> Vec<Ticket> {
+    match priority {
+        Some(p) => tickets.into_iter().filter(|t| t.priority == p).collect(),
+        None => tickets,
+    }
+}
+
+// Safe to unwrap the parse: clap already restricted the value to Priority::VALUES.
+fn priority_arg(matches: &ArgMatches, name: &str) -> Option<Priority> {
+    matches
+        .get_one::<String>(name)
+        .map(|s| s.parse().expect("clap restricts this to a known priority"))
+}
+
 // Prose for a ticket arrives either inline under `inline_arg` or out of band via
 // --body-file, which clap already keeps mutually exclusive.
 fn body_arg(matches: &ArgMatches, inline_arg: &str) -> Result<Option<String>> {
@@ -58,6 +76,14 @@ fn body_arg(matches: &ArgMatches, inline_arg: &str) -> Result<Option<String>> {
     match matches.get_one::<String>("body-file") {
         Some(path) => Ok(Some(read_body_file(path)?)),
         None => Ok(None),
+    }
+}
+
+fn priority_color(priority: Priority) -> Color {
+    match priority {
+        Priority::High => Color::Red,
+        Priority::Medium => Color::Yellow,
+        Priority::Low => Color::DarkGrey,
     }
 }
 
@@ -71,7 +97,7 @@ fn print_ticket_table(section: &str, tickets: &[Ticket]) {
     }
     let mut table = Table::new();
     table.set_content_arrangement(ContentArrangement::Dynamic);
-    table.set_header(["#", "Title", "Status"]);
+    table.set_header(["#", "Title", "Priority", "Status"]);
     for t in tickets {
         let (label, color) = match t.status {
             Status::Pending => ("pending", Color::Yellow),
@@ -81,6 +107,7 @@ fn print_ticket_table(section: &str, tickets: &[Ticket]) {
         table.add_row([
             Cell::new(format!("{:03}", t.number)),
             Cell::new(&t.title),
+            Cell::new(t.priority.as_str()).fg(priority_color(t.priority)),
             Cell::new(label).fg(color),
         ]);
     }
@@ -115,6 +142,7 @@ fn list(matches: &ArgMatches) -> Result<()> {
         .get_one::<String>("status")
         .map(|s| s.as_str())
         .unwrap_or("pending");
+    let priority = priority_arg(matches, "priority");
 
     let single_ws: Option<(String, PathBuf)> = if matches.get_one::<String>("workstream").is_some()
     {
@@ -124,7 +152,7 @@ fn list(matches: &ArgMatches) -> Result<()> {
     };
 
     if let Some((ws_name, ws_dir)) = single_ws {
-        let tickets = filter_tickets(load_tickets(&ws_dir)?, filter);
+        let tickets = filter_by_priority(filter_tickets(load_tickets(&ws_dir)?, filter), priority);
         if json {
             let val: Vec<serde_json::Value> = tickets
                 .iter()
@@ -133,6 +161,7 @@ fn list(matches: &ArgMatches) -> Result<()> {
                         "number": t.number,
                         "title": t.title,
                         "status": t.status,
+                        "priority": t.priority,
                     })
                 })
                 .collect();
@@ -144,7 +173,10 @@ fn list(matches: &ArgMatches) -> Result<()> {
         let mut groups: Vec<(String, Vec<Ticket>)> = Vec::new();
 
         for (name, dir) in live_workstreams(&root) {
-            let tickets = filter_tickets(load_tickets(&dir).unwrap_or_default(), filter);
+            let tickets = filter_by_priority(
+                filter_tickets(load_tickets(&dir).unwrap_or_default(), filter),
+                priority,
+            );
             if !tickets.is_empty() {
                 groups.push((name, tickets));
             }
@@ -160,6 +192,7 @@ fn list(matches: &ArgMatches) -> Result<()> {
                             "number": t.number,
                             "title": t.title,
                             "status": t.status,
+                            "priority": t.priority,
                         })
                     })
                 })
@@ -213,6 +246,10 @@ fn show(matches: &ArgMatches) -> Result<()> {
     }
 
     println!("{}", ticket.title.bold());
+    println!(
+        "{}",
+        format!("priority: {}", ticket.priority.as_str()).dimmed()
+    );
     render_ticket_content(&ticket.content);
     Ok(())
 }
@@ -222,9 +259,10 @@ fn add(matches: &ArgMatches) -> Result<()> {
     let json = matches.get_flag("json");
     let title = matches.get_one::<String>("title").unwrap();
     let body = body_arg(matches, "description")?;
+    let priority = priority_arg(matches, "priority");
 
     let (_, ws_dir) = resolve_workstream(matches, &root)?;
-    let (number, path) = create_ticket(&ws_dir, title, body.as_deref())?;
+    let (number, path) = create_ticket(&ws_dir, title, priority, body.as_deref())?;
 
     append_log(&ws_dir, &format!("added {number:03} ({title})"))?;
 
@@ -333,6 +371,32 @@ fn rewrite_status_and_append(
     } else {
         result
     }
+}
+
+fn priority(matches: &ArgMatches) -> Result<()> {
+    let root = get_repo_root(matches)?;
+    let json = matches.get_flag("json");
+    let id = matches.get_one::<String>("id").unwrap();
+    let level = priority_arg(matches, "level").expect("clap requires the level argument");
+
+    let (_, ws_dir) = resolve_workstream(matches, &root)?;
+    let tickets = load_tickets(&ws_dir)?;
+    let ticket = resolve_ticket(&tickets, id)?;
+
+    write_priority(&ticket_path(&ws_dir, ticket.number), level)?;
+    append_log(
+        &ws_dir,
+        &format!("priority {:03} {}", ticket.number, level.as_str()),
+    )?;
+
+    if json {
+        return print_json(&serde_json::json!({
+            "number": ticket.number,
+            "priority": level,
+        }));
+    }
+    println!("priority {:03} {}", ticket.number, level.as_str());
+    Ok(())
 }
 
 fn journal(matches: &ArgMatches) -> Result<()> {
@@ -679,13 +743,18 @@ fn status(matches: &ArgMatches) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::ticket::{Status, Ticket};
+    use crate::core::ticket::{Priority, Status, Ticket};
 
     fn make_ticket(number: u32, status: Status) -> Ticket {
+        make_ranked_ticket(number, status, Priority::Medium)
+    }
+
+    fn make_ranked_ticket(number: u32, status: Status, priority: Priority) -> Ticket {
         Ticket {
             number,
             title: format!("Ticket {number}"),
             status,
+            priority,
             content: String::new(),
         }
     }
@@ -718,6 +787,21 @@ mod tests {
     fn filter_tickets_empty_input() {
         assert_eq!(filter_tickets(vec![], "all").len(), 0);
         assert_eq!(filter_tickets(vec![], "pending").len(), 0);
+    }
+
+    #[test]
+    fn filter_by_priority_keeps_only_the_requested_level() {
+        let tickets = vec![
+            make_ranked_ticket(1, Status::Pending, Priority::High),
+            make_ranked_ticket(2, Status::Pending, Priority::Medium),
+            make_ranked_ticket(3, Status::Pending, Priority::High),
+        ];
+        let high = filter_by_priority(tickets.clone(), Some(Priority::High));
+        assert_eq!(
+            high.iter().map(|t| t.number).collect::<Vec<_>>(),
+            vec![1, 3]
+        );
+        assert_eq!(filter_by_priority(tickets, None).len(), 3);
     }
 
     #[test]

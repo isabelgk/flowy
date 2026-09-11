@@ -44,6 +44,11 @@ not inside a worktree, list `<repo_root>/worktrees/` and ask.
    `plan`), the goal is reached and the branch is finished (`close`), or the goal
    is not reached and the remaining work was never ticketed (`plan`).
 
+   The rows come back ranked by priority, and each carries a `priority` field.
+   Treat it as the user's urgency signal, to be weighed against blocking order
+   rather than obeyed: a high-priority ticket blocked by a low-priority one is
+   still second.
+
 3. **Read every pending ticket and reason about ordering.** For more than ~15
    pending tickets, delegate to a `general-purpose` subagent rather than reading
    all bodies inline. Give it:

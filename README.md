@@ -17,7 +17,7 @@ project/
       next.md                         # rolling recommendation
       milestones/<nnn>-<slug>/        # a plan carried to its goal, frozen
       tickets/
-        001.md                        # TOML frontmatter encodes status
+        001.md                        # TOML frontmatter encodes status + priority
   notes/workstreams/archive/<name>/   # archived workstreams, same shape
 ```
 
@@ -30,8 +30,10 @@ worktree gives you its tickets too. Archived workstreams are the exception:
 Without it every worktree would report dirty and `git worktree remove` would
 refuse; the entry is local to your clone and never committed.
 
-Ticket metadata lives in TOML frontmatter (`+++` delimiters) with `title` and
-`status` fields. Status values: `"pending"`, `"complete"`, `"wont-implement"`.
+Ticket metadata lives in TOML frontmatter (`+++` delimiters) with `title`,
+`status`, and `priority` fields. Status values: `"pending"`, `"complete"`,
+`"wont-implement"`. Priority values: `"high"`, `"medium"`, `"low"`; a ticket with
+no `priority` key ranks as medium, so the field can stay absent.
 Ticket IDs are zero-padded three-digit numbers (`001`, `002`, ...), claimed
 atomically so that concurrent `ticket add` runs get distinct numbers rather than
 the last writer overwriting the rest.
@@ -81,12 +83,23 @@ Manage markdown tickets. Workstream defaults to the current git branch.
 | `show` | `s` | Display a ticket |
 | `add` | `a` | Create a new ticket |
 | `done` | `d` | Mark a ticket as done |
+| `priority` | `p` | Set a ticket's priority |
 | `journal` | `j` | Append a journal entry to a ticket |
 | `edit` | `e` | Open a ticket in `$EDITOR` |
 | `search` | `/` | Search tickets with fuzzy matching |
 | `status` | `st` | Show workstream overview |
 
 Use `-w / --workstream <NAME>` to target a workstream other than the current branch.
+
+Tickets list high priority first, then medium, then low, and by number within a
+rank. `add` takes `-p / --priority <high|medium|low>`, `priority <ID> <LEVEL>`
+changes it afterward, and `list -p <LEVEL>` narrows the listing to one rank.
+
+```sh
+flowy t add -p high "Crash on empty config"
+flowy t priority 3 low
+flowy t list -p high
+```
 
 `add`, `done`, and `journal` all take prose. Passing it inline (`-d`,
 `--summary`, or the positional journal text) is fine for a phrase, but multi-line
@@ -155,7 +168,9 @@ exists are reported rather than moved. `--dry-run` reports without moving.
 
 ### `flowy tui`
 
-Launch the interactive terminal UI.
+Launch the interactive terminal UI. The ticket list ranks high priority first;
+`s` cycles the selected ticket's status and `p` cycles its priority, writing
+each through to the file.
 
 ### `flowy completions <shell>`
 

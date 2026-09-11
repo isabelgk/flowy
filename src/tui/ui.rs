@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::commands::worktree::format_age;
-use crate::core::ticket::Status;
+use crate::core::ticket::{Priority, Status};
 
 use super::{App, InputMode, View};
 
@@ -24,6 +24,22 @@ fn status_glyph(status: &Status) -> &'static str {
         Status::Pending => "·",
         Status::Complete => "✓",
         Status::WontImplement => "✗",
+    }
+}
+
+fn priority_color(priority: Priority) -> Color {
+    match priority {
+        Priority::High => Color::Red,
+        Priority::Medium => Color::Yellow,
+        Priority::Low => Color::DarkGray,
+    }
+}
+
+fn priority_glyph(priority: Priority) -> &'static str {
+    match priority {
+        Priority::High => "^",
+        Priority::Medium => "-",
+        Priority::Low => "v",
     }
 }
 
@@ -111,6 +127,11 @@ fn render_tickets(f: &mut Frame, app: &mut App, left: Rect, right: Rect) {
                     status_glyph(&t.status),
                     Style::default().fg(status_color(&t.status)),
                 ),
+                Span::raw(" "),
+                Span::styled(
+                    priority_glyph(t.priority),
+                    Style::default().fg(priority_color(t.priority)),
+                ),
                 Span::raw("  "),
                 Span::styled(t.title.as_str(), title_style),
             ]))
@@ -144,6 +165,16 @@ fn render_tickets(f: &mut Frame, app: &mut App, left: Rect, right: Rect) {
             Span::styled(status_glyph(&ticket.status), Style::default().fg(color)),
             Span::raw(" "),
             Span::styled(status_label(&ticket.status), Style::default().fg(color)),
+            Span::raw("  "),
+            Span::styled(
+                priority_glyph(ticket.priority),
+                Style::default().fg(priority_color(ticket.priority)),
+            ),
+            Span::raw(" "),
+            Span::styled(
+                ticket.priority.as_str(),
+                Style::default().fg(priority_color(ticket.priority)),
+            ),
             Span::raw(" "),
         ]);
         let lines = render_markdown(ticket.content.as_str());
@@ -236,6 +267,8 @@ fn render_help(f: &mut Frame, app: &App, area: Rect) {
             Span::raw(" navigate  "),
             Span::styled("s", key_style),
             Span::raw(" cycle status  "),
+            Span::styled("p", key_style),
+            Span::raw(" cycle priority  "),
             Span::styled("i", key_style),
             Span::raw(" search  "),
             Span::styled("enter", key_style),

@@ -2028,3 +2028,175 @@ fn notes_milestone_without_a_plan_fails() {
         .failure()
         .stderr(predicate::str::contains("nothing to freeze"));
 }
+
+#[test]
+fn t_add_writes_priority_frontmatter() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "test/branch"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .args(["t", "add", "-w", "test-branch", "-p", "high", "Urgent"])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(repo.ticket("test-branch", 1)).unwrap();
+    assert!(content.contains("priority = \"high\""));
+}
+
+#[test]
+fn t_add_without_priority_omits_the_field() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "test/branch"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .args(["t", "add", "-w", "test-branch", "Plain"])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(repo.ticket("test-branch", 1)).unwrap();
+    assert!(!content.contains("priority"));
+}
+
+#[test]
+fn t_priority_sets_the_level_on_an_existing_ticket() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "test/branch"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["t", "add", "-w", "test-branch", "Later"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .args(["t", "priority", "-w", "test-branch", "1", "low"])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(repo.ticket("test-branch", 1)).unwrap();
+    assert!(content.contains("priority = \"low\""));
+
+    repo.cmd()
+        .args(["t", "priority", "-w", "test-branch", "1", "high"])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(repo.ticket("test-branch", 1)).unwrap();
+    assert!(content.contains("priority = \"high\""));
+    assert!(!content.contains("low"));
+}
+
+#[test]
+fn t_priority_rejects_an_unknown_level() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "test/branch"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["t", "add", "-w", "test-branch", "T"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .args(["t", "priority", "-w", "test-branch", "1", "urgent"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn t_list_orders_by_priority_then_number() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "test/branch"])
+        .assert()
+        .success();
+    for (title, priority) in [
+        ("Low one", "low"),
+        ("High one", "high"),
+        ("Plain", "medium"),
+    ] {
+        repo.cmd()
+            .args(["t", "add", "-w", "test-branch", "-p", priority, title])
+            .assert()
+            .success();
+    }
+
+    let output = repo
+        .cmd()
+        .args(["t", "list", "-w", "test-branch", "--json"])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let arr = json.as_array().unwrap();
+    let order: Vec<u64> = arr.iter().map(|t| t["number"].as_u64().unwrap()).collect();
+    assert_eq!(order, vec![2, 3, 1]);
+    assert_eq!(arr[0]["priority"], "high");
+}
+
+#[test]
+fn t_list_filters_by_priority() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "test/branch"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["t", "add", "-w", "test-branch", "-p", "high", "Urgent"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["t", "add", "-w", "test-branch", "Ordinary"])
+        .assert()
+        .success();
+
+    let output = repo
+        .cmd()
+        .args(["t", "list", "-w", "test-branch", "--json", "-p", "high"])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let arr = json.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["title"], "Urgent");
+}
+
+// A ticket written before priorities existed has no `priority` key; setting one
+// must leave the rest of the frontmatter and the body intact.
+#[test]
+fn t_priority_preserves_an_existing_ticket_body() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "test/branch"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args([
+            "t",
+            "add",
+            "-w",
+            "test-branch",
+            "-d",
+            "Some details",
+            "Titled",
+        ])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .args(["t", "priority", "-w", "test-branch", "1", "high"])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(repo.ticket("test-branch", 1)).unwrap();
+    assert!(content.contains("title = \"Titled\""));
+    assert!(content.contains("status = \"pending\""));
+    assert!(content.contains("Some details"));
+}

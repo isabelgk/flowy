@@ -26,7 +26,7 @@ project/
       status.md                       # append-only activity log
       planning.md                     # narrative plan (written by `plan`)
       next.md                         # rolling recommendation (by `next`)
-      tickets/001.md                  # TOML frontmatter (+++) holds status
+      tickets/001.md                  # TOML frontmatter (+++): status, priority
       milestones/001-<slug>/          # a finished plan, frozen (by `milestone`)
   notes/workstreams/archive/<name>/   # archived workstreams, same shape
 ```
@@ -153,6 +153,14 @@ add` numbers from the highest file in `tickets/`, so a directory emptied of its
 history restarts at `001` and collides with every number the plans and journals
 already cite. Nothing may move the highest-numbered ticket out of `tickets/` -
 which is why `milestone` freezes the plan and leaves the tickets where they are.
+
+**Priority is metadata, not order of work.** Tickets carry `high`, `medium`, or
+`low`; a ticket with no `priority` key is medium. Listings rank high first, then
+medium, then low, and by number within a rank. Set it at creation with
+`flowy ticket add -p <level>` or afterward with
+`flowy ticket priority <n> <level>`. What to do next still comes from `next.md`
+and from what blocks what - priority is the user's signal about urgency, not a
+substitute for that reasoning.
 
 **Read with `--json`.** `flowy --json ticket show -w <ws> <n>` and
 `flowy ticket list -w <ws> --status pending --json` are the parseable forms.

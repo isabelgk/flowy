@@ -15,7 +15,7 @@ use crate::commands::worktree::{WorktreeInfo, list_worktrees};
 use crate::core::{
     names::{workstream_dir, workstream_subdir},
     repo::cwd_worktree,
-    ticket::{Status, load_tickets, ticket_path},
+    ticket::{Priority, Status, load_tickets, ticket_path, write_priority},
 };
 
 mod ui;
@@ -36,6 +36,7 @@ pub struct TuiTicket {
     pub number: u32,
     pub title: String,
     pub status: Status,
+    pub priority: Priority,
     pub content: String,
     pub path: PathBuf,
 }
@@ -178,6 +179,17 @@ impl App {
                 KeyCode::Char('i') => {
                     self.input_mode = InputMode::Search;
                 }
+                // The list is priority-sorted at load, but a cycled ticket keeps its
+                // row until the next load: resorting under the cursor would move the
+                // selection out from under the key that just pressed it.
+                KeyCode::Char('p') => {
+                    if let Some(&idx) = filtered.get(self.ticket_selected) {
+                        let new_priority = next_priority(self.tickets[idx].priority);
+                        if write_priority(&self.tickets[idx].path, new_priority).is_ok() {
+                            self.tickets[idx].priority = new_priority;
+                        }
+                    }
+                }
                 KeyCode::Char('s') => {
                     if let Some(&idx) = filtered.get(self.ticket_selected) {
                         let new_status = next_status(&self.tickets[idx].status);
@@ -276,6 +288,14 @@ impl App {
     }
 }
 
+fn next_priority(priority: Priority) -> Priority {
+    match priority {
+        Priority::High => Priority::Medium,
+        Priority::Medium => Priority::Low,
+        Priority::Low => Priority::High,
+    }
+}
+
 fn next_status(status: &Status) -> Status {
     match status {
         Status::Pending => Status::Complete,
@@ -328,6 +348,7 @@ fn load_tui_tickets(ws_dir: &Path) -> Vec<TuiTicket> {
                 number: t.number,
                 title: t.title,
                 status: t.status,
+                priority: t.priority,
                 content: t.content,
                 path,
             }
@@ -439,6 +460,7 @@ mod tests {
                     number: n,
                     title: format!("ticket {n}"),
                     status: Status::Pending,
+                    priority: Priority::Medium,
                     content: String::new(),
                     path: PathBuf::new(),
                 })
@@ -514,6 +536,34 @@ mod tests {
     }
 
     #[test]
+    fn p_cycles_priority_and_writes_it_through() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("001.md");
+        std::fs::write(
+            &path,
+            "+++\nstatus = \"pending\"\ntitle = \"t\"\n+++\n\nBody.\n",
+        )
+        .unwrap();
+
+        let mut app = app_with_tickets(1);
+        app.tickets[0].path = path.clone();
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+        assert_eq!(app.tickets[0].priority, Priority::Low);
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("priority = \"low\"")
+        );
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE));
+        assert_eq!(app.tickets[0].priority, Priority::High);
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("priority = \"high\""));
+        assert!(content.ends_with("+++\n\nBody.\n"));
+    }
+
+    #[test]
     fn ctrl_d_and_ctrl_u_move_selection_by_half_the_list_height() {
         let mut app = app_with_tickets(30);
         let mut terminal = Terminal::new(TestBackend::new(TERM_WIDTH, TERM_HEIGHT)).unwrap();
@@ -525,6 +575,21 @@ mod tests {
 
         app.handle_key(ctrl('u'));
         assert_eq!(app.ticket_selected, 0);
+    }
+
+    #[test]
+    fn the_list_row_shows_a_priority_glyph() {
+        let mut app = app_with_tickets(1);
+        app.tickets[0].priority = Priority::High;
+        let mut terminal = Terminal::new(TestBackend::new(TERM_WIDTH, TERM_HEIGHT)).unwrap();
+        terminal.draw(|f| ui::render(f, &mut app)).unwrap();
+
+        let row: String = terminal.backend().buffer().content()[TERM_WIDTH as usize * 4..]
+            .iter()
+            .take(TERM_WIDTH as usize)
+            .map(|c| c.symbol())
+            .collect();
+        assert!(row.contains("· ^  ticket 1"), "unexpected row: {row:?}");
     }
 
     #[test]

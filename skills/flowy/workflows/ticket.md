@@ -75,4 +75,8 @@ from context below.
    EOF
    ```
 
+   Add `-p high` or `-p low` only when the user said something that ranks this
+   work against the rest of the queue. Omitting the flag leaves the ticket at
+   medium, which is the right default for a ticket filed without that signal.
+
 6. **Report** the filename printed by `flowy ticket add`.
