@@ -490,7 +490,9 @@ fn compute_worktree_entry(
 
 fn tickets_dir_mtime(ws_dir: &Path) -> u64 {
     // Max mtime across ticket files — directory mtime only changes on add/remove,
-    // not on content edits (e.g. status changes written in-place).
+    // not on content edits (e.g. status changes written in-place). Nanoseconds,
+    // because a status change landing in the same second as the previous count
+    // would otherwise read as no change at all and keep the stale count forever.
     let dir = ws_dir.join("tickets");
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return 0;
@@ -504,7 +506,7 @@ fn tickets_dir_mtime(ws_dir: &Path) -> u64 {
                 .ok()?
                 .duration_since(std::time::UNIX_EPOCH)
                 .ok()
-                .map(|d| d.as_secs())
+                .map(|d| d.as_nanos() as u64)
         })
         .max()
         .unwrap_or(0)
