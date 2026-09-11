@@ -179,9 +179,13 @@ search filter.
 Serve a browser UI for the repo's workstreams over HTTP.
 
 ```sh
-flowy web                      # http://127.0.0.1:8787
-flowy web --port 9000 --open   # pick a port and open a browser
+flowy web                      # binds a free port and prints the URL
+flowy web --port 9000 --open   # pin the port and open a browser
 ```
+
+The port is chosen by the OS unless `--port` pins one, so several repos can be
+served at once without colliding. The URL is printed as soon as the listener is
+up.
 
 The sidebar lists live worktrees; each one gets a filterable ticket list, a
 detail page rendering the ticket's markdown, and forms for the same mutations

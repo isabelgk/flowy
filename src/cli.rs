@@ -332,8 +332,8 @@ fn web_cmd() -> Command {
                 .short('p')
                 .value_name("PORT")
                 .value_parser(clap::value_parser!(u16))
-                .default_value("8787")
-                .help("Port to listen on (0 picks a free one)"),
+                .default_value("0")
+                .help("Port to listen on (default: a free one, printed at startup)"),
         )
         .arg(
             Arg::new("host")

@@ -30,7 +30,8 @@ pub fn run(root: &Path, host: &str, port: u16, open_browser: bool) -> Result<()>
         .ok_or_else(|| anyhow::anyhow!("server bound to a non-IP address"))?;
     let url = format!("http://{host}:{}", bound.port());
 
-    println!("flowy web: {} at {url}", root.display());
+    println!("flowy web: {url}");
+    println!("  repo: {}", root.display());
     if open_browser {
         open_url(&url);
     }
