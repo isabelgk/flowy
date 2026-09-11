@@ -5,6 +5,12 @@ use crate::commands::worktree::{WorktreeInfo, format_age};
 use crate::core::ticket::{Priority, Status, Ticket};
 
 const CSS: &str = include_str!("style.css");
+const SCRIPT: &str = include_str!("script.js");
+
+// Runs in <head> rather than with the rest of the script, so a collapsed sidebar
+// is collapsed in the first paint instead of flashing open on every navigation.
+const RESTORE_NAV: &str = "try{if(localStorage.getItem('flowy-nav')==='closed')\
+     document.documentElement.classList.add('nav-collapsed')}catch(e){}";
 
 pub struct Nav {
     pub workstreams: Vec<WorktreeInfo>,
@@ -40,14 +46,20 @@ pub fn page(title: &str, nav: &Nav, content: Markup) -> Markup {
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 title { (title) " - flowy" }
                 style { (PreEscaped(CSS)) }
+                script { (PreEscaped(RESTORE_NAV)) }
             }
             body {
                 header.topbar {
+                    button.nav-toggle type="button" aria-expanded="true"
+                        aria-controls="workstreams" title="Hide workstreams" {
+                        span.bars {}
+                        span.sr-only { "Toggle workstreams" }
+                    }
                     a.brand href="/" { "flowy" }
                     span.title { (title) }
                 }
                 .shell {
-                    nav.sidebar {
+                    nav.sidebar #workstreams {
                         h2 { "Workstreams" }
                         @if nav.workstreams.is_empty() {
                             p.empty { "No worktrees yet." }
@@ -70,6 +82,7 @@ pub fn page(title: &str, nav: &Nav, content: Markup) -> Markup {
                     }
                     main.content { (content) }
                 }
+                script { (PreEscaped(SCRIPT)) }
             }
         }
     }

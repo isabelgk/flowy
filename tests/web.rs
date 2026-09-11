@@ -322,3 +322,17 @@ fn favicon_is_answered_without_a_page() {
     assert_eq!(status, 204);
     assert!(!response.contains("<html"), "{response}");
 }
+
+#[test]
+fn every_page_carries_the_sidebar_toggle() {
+    let repo = repo_with_worktree();
+    let server = Server::start(&repo);
+
+    let (status, page) = server.get("/w/feat-web");
+    assert_eq!(status, 200);
+    assert!(page.contains("class=\"nav-toggle\""), "{page}");
+    assert!(page.contains("aria-controls=\"workstreams\""), "{page}");
+    assert!(page.contains("id=\"workstreams\""), "{page}");
+    // Applied before first paint, so a collapsed sidebar does not flash open.
+    assert!(page.contains("nav-collapsed"), "{page}");
+}

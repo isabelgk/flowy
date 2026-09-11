@@ -203,6 +203,11 @@ Mutations are written through the same code the CLI uses and logged to
 
 Archived workstreams are not served; unarchive one to see it.
 
+The sidebar collapses from the button in the top left, and the choice is
+remembered in the browser; it is applied before the first paint, so a collapsed
+sidebar does not flash open on each navigation. That toggle is the only
+JavaScript on the page.
+
 The sidebar costs a `git status` per worktree, which on a large repo dominates
 the time to render any page. Pages serve the last sidebar snapshot and refresh
 it behind the request, so only the first page of a session waits for git; a

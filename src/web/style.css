@@ -53,7 +53,47 @@ a:hover { text-decoration: underline; }
 .topbar .brand { font-weight: 700; letter-spacing: 0.02em; }
 .topbar .title { color: var(--muted); }
 
+.nav-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border-color: transparent;
+}
+.nav-toggle:hover { background: var(--bg); border-color: var(--border); }
+/* Three bars from one element: the box plus its two shadows. */
+.nav-toggle .bars,
+.nav-toggle .bars::before,
+.nav-toggle .bars::after {
+  display: block;
+  width: 15px;
+  height: 2px;
+  background: var(--text);
+  border-radius: 1px;
+}
+.nav-toggle .bars { position: relative; }
+.nav-toggle .bars::before,
+.nav-toggle .bars::after { content: ""; position: absolute; left: 0; }
+.nav-toggle .bars::before { top: -5px; }
+.nav-toggle .bars::after { top: 5px; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .shell { display: flex; align-items: flex-start; gap: 24px; padding: 20px; }
+.nav-collapsed .sidebar { display: none; }
+/* Content keeps its own max-width, so collapsing widens the page rather than
+   stretching the text column across the whole screen. */
+.nav-collapsed .content { margin: 0 auto; }
 
 .sidebar { flex: 0 0 240px; }
 .sidebar h2 { font-size: 12px; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
