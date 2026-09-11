@@ -25,7 +25,8 @@ the reasoning behind everything already merged goes with it.
 Everything after the verb: `<workstream-name> [slug]`
 
 - `<workstream-name>`: if missing, default to the current git branch's workstream;
-  if cwd is not inside a worktree, list `<repo_root>/worktrees/` and ask.
+  if cwd is not inside a worktree, list `<repo_root>/worktrees/` and ask which
+  one with `AskUserQuestion`.
 - `[slug]`: a short kebab-case name for the milestone. If omitted, derive one from
   the plan's goal and say what you chose.
 
@@ -37,12 +38,12 @@ Everything after the verb: `<workstream-name> [slug]`
    flowy ticket status -w <workstream-name>
    ```
 
-   Pending tickets mean this is not a boundary yet. Say which ones are open and
-   ask whether they belong to this milestone (implement them first) or to the next
-   one (they carry over, and the summary says so). Then read `<ws_dir>/planning.md`
-   and check its stated goal against what actually landed. If the goal is not
-   reached, stop and say so - a summary claiming a goal was reached is worse than
-   no summary.
+   Pending tickets mean this is not a boundary yet. Say which ones are open,
+   then ask with `AskUserQuestion` whether they belong to this milestone
+   (implement them first) or to the next one (they carry over, and the summary
+   says so). Then read `<ws_dir>/planning.md` and check its stated goal against
+   what actually landed. If the goal is not reached, stop and say so - a summary
+   claiming a goal was reached is worse than no summary.
 
 2. **Read the material the summary is made of.** `planning.md` in full, including
    every amendment - the amendments are where the plan corrected itself, and a

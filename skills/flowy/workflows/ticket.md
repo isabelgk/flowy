@@ -9,7 +9,7 @@ Everything after the verb: `<workstream-name> [brief]`
 
 - `<workstream-name>`: first token. If missing, default to the current git
   branch's workstream; if cwd is not inside a worktree, list
-  `<repo_root>/worktrees/` and ask.
+  `<repo_root>/worktrees/` and ask which one with `AskUserQuestion`.
 - `[brief]`: the rest - a natural-language description of what needs doing. If
   absent, ask before proceeding. When the request arrived mid-conversation
   ("file a ticket for that"), the brief is the preceding discussion; use it.
@@ -43,9 +43,10 @@ from context below.
      "done."
    - The brief implies a choice between two meaningfully different approaches.
 
-   If any fire, ask **all questions in a single round** - never drip-feed
-   follow-ups. Cap at 2-3. For bounded choices (priority, scope variant A vs. B)
-   use `AskUserQuestion`; for open-ended ones, plain prose.
+   If any fire, ask **all of them in one `AskUserQuestion` call** - never
+   drip-feed follow-ups. Cap at 2-3 questions. Only an answer with no bounded
+   option set (a name, a paragraph of missing context) belongs in prose
+   instead.
 
    Skip this step entirely when the brief is already specific. Do not ask for
    what you can derive.

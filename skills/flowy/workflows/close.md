@@ -5,16 +5,19 @@
 Everything after the verb: `<workstream-name>`
 
 If missing, default to the current git branch's workstream; if cwd is not inside
-a worktree, list `<repo_root>/worktrees/` and ask.
+a worktree, list `<repo_root>/worktrees/` and ask which one with
+`AskUserQuestion`.
 
 ## Steps
 
 1. **Read `<ws_dir>/meta.toml`** to confirm the worktree path and branch name.
 
 2. **Ensure the branch is clean.** Run `git status` from inside the worktree. If
-   there are uncommitted changes, commit them before archiving - archiving with
-   uncommitted changes loses work permanently. Only proceed once the branch is
-   clean, or the user explicitly confirms they want to discard.
+   there are uncommitted changes, stop and ask with `AskUserQuestion`: commit
+   them first (recommended), or discard them and archive anyway. Archiving with
+   uncommitted changes loses that work permanently, so do not settle it from how
+   small the diff looks. Only proceed once the branch is clean, or the user
+   picked discarding.
 
 3. **Write `audit.md`** before archiving. It covers the whole branch,
    across every milestone it went through - a `milestones/` directory means the

@@ -9,7 +9,7 @@ Everything after the verb: `<workstream-name> [ticket-number]`
 
 - `<workstream-name>`: required. If missing, default to the current git branch's
   workstream; if cwd is not inside a worktree, list `<repo_root>/worktrees/` and
-  ask.
+  ask which one with `AskUserQuestion`.
 - `[ticket-number]`: the ticket to implement (`1`, `01`, `003` all match the
   leading number in the filename). If omitted, derive it from `next.md` per
   step 1.
@@ -24,9 +24,11 @@ Everything after the verb: `<workstream-name> [ticket-number]`
      this run's ticket-number list and implement them together as described
      below. Tell the user which ticket(s) `next.md` recommended before
      proceeding.
-   - If it does not exist, ask which ticket number to implement (suggest
-     `/flowy next <workstream-name>` first if they are unsure) and stop until
-     they answer.
+   - If it does not exist, list the pending tickets
+     (`flowy ticket list -w <workstream-name> --status pending --json`) and ask
+     with `AskUserQuestion` which to implement: the likeliest few by priority as
+     options, plus one for running `/flowy next <workstream-name>` first to work
+     the order out properly. Stop until they answer.
 
 2. **Read workstream context.** `<ws_dir>/meta.toml`, `<ws_dir>/status.md`, and
    `<ws_dir>/planning.md`.
@@ -96,42 +98,44 @@ Everything after the verb: `<workstream-name> [ticket-number]`
      producing findings until fixed. A generator is worth filing even when large;
      prefer filing the generator over filing its instances one at a time.
 
-   Ask the user before filing, not after - and when you propose a ticket, say
-   which of the three above you think it is and why fixing it in place is not the
-   better call.
+   Ask before filing, not after, with `AskUserQuestion` - fix it here, write it
+   down, or file it - and lead with the one you think it is. Why fixing it in
+   place is or is not the better call goes in the option descriptions.
 
-9. **Report implementation complete and ask the user to test.** The ticket's
-   journal already holds the detail; this message exists only to get the user to
-   the decisions that are theirs. Keep it to three parts:
+9. **Report implementation complete, then hand over the decisions.** The
+   ticket's journal already holds the detail; this step exists only to get the
+   user to the decisions that are theirs. Report in prose:
 
    ~~~
    Implemented <ticket>: <one or two sentences on what was built>.
 
    Commits:
    - <hash> <subject>
-
-   Needs your call:
-   1. <question> - <option A> or <option B>. Recommend <A>: <one-line reason>.
    ~~~
-
-   Rules for the last part:
-
-   - List only questions that genuinely need the user's answer and could not be
-     settled during implementation: a choice that changes shipping behaviour, an
-     acceptance criterion the current code contradicts, something left
-     unimplemented. Anything filed as a ticket was already agreed with the user
-     when the finding was disposed of, and is not a question here.
-   - Every question gets a recommendation. Recommend, then wait - do not resolve
-     a question that is the user's to answer, and do not act on your own
-     recommendation before they answer.
-   - If nothing needs an answer, say so in one line and stop. Do not manufacture
-     a question to fill the section.
 
    Do not restate the ticket description, walk through each file changed, or
    narrate incidental findings you already fixed.
 
-   Ask the user to test and confirm the work is correct before marking the
-   ticket done. Do **not** run `flowy ticket done` yet.
+   Then put everything still open into one `AskUserQuestion` call:
+
+   - One question per decision that genuinely needs the user's answer and could
+     not be settled during implementation: a choice that changes shipping
+     behaviour, an acceptance criterion the current code contradicts, something
+     left unimplemented. Anything filed as a ticket was already agreed with the
+     user when the finding was disposed of, and is not a question here.
+   - Every question gets a recommendation, as the first option marked
+     `(Recommended)` with the reason as its description. Then wait - do not
+     resolve a question that is the user's to answer, and do not act on your own
+     recommendation before they answer.
+   - Last question in the call: whether it works, given they still have to go
+     test it. Options are that it is correct and ready to mark done, or that it
+     needs changes. Four questions is the cap, so when the decisions fill the
+     call, ask them first and this one after.
+   - Manufacture nothing to fill the call. With no decisions open, the test
+     question is the whole call.
+
+   Do **not** run `flowy ticket done` before they answer that last question with
+   the work being correct.
 
 10. **On user confirmation**, mark it done:
 

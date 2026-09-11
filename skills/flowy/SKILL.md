@@ -103,11 +103,13 @@ because the request arrived mid-conversation:
 
 When the workstream is unnamed, default to the one for the current git branch -
 that is what `flowy` itself does when `-w` is omitted. If cwd is not inside a
-worktree, list `<repo_root>/worktrees/` and ask which one.
+worktree, list `<repo_root>/worktrees/` and ask which one with
+`AskUserQuestion`.
 
 Ambiguity between `plan` and `ticket` is the common case: `plan` is for work
 that needs exploring and decomposing into several steps, `ticket` for a single
-task already understood. When it is genuinely unclear, ask - the cost of
+task already understood. When it is genuinely unclear, ask with
+`AskUserQuestion` - the two verbs are the two options - because the cost of
 guessing wrong is a planning run the user did not want, or a ticket that hides
 five steps inside it.
 
@@ -116,9 +118,23 @@ one question: was the goal reached? A reached goal on a branch with more to do i
 `milestone` and then `plan`; a goal that turned out to be wrong is `plan` alone,
 overwriting; a branch with nothing left is `close`. Asking beats guessing here
 too, because `plan` overwrites `planning.md` and a finished plan overwritten
-without being frozen is not recoverable from the notes.
+without being frozen is not recoverable from the notes. Those three endings are
+the three options to offer.
 
 ## Conventions that hold across every workflow
+
+**Ask by offering the choices.** Every question here whose answers are a known
+set - which workstream, `plan` or `ticket`, commit or discard, file it or fix it
+in place - goes through `AskUserQuestion`, so the answer is a selection rather
+than something to type out. Put the option you recommend first and mark it
+`(Recommended)`; give each option a one-line description of what happens if it
+is picked, since that is where the reasoning goes instead of a paragraph before
+the question. The tool always supplies "Other", so an escape hatch is never one
+of your options. Four options is the cap: when the real set is longer - a repo
+with a dozen worktrees - offer the three likeliest and let "Other" carry the
+rest. Batch everything you need into one call, up to four questions. Answers
+that are not a choice at all - a branch name, a ticket brief, a free-form
+clarification - stay prose.
 
 **The CLI owns the files; go through it rather than around it.** `flowy ticket
 add` assigns ticket numbers sequentially and appends to `status.md`;

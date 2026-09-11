@@ -12,7 +12,8 @@ line-by-line derivation of `planning.md`.
 Everything after the verb: `<workstream-name>`
 
 Required. If missing, default to the current git branch's workstream; if cwd is
-not inside a worktree, list `<repo_root>/worktrees/` and ask.
+not inside a worktree, list `<repo_root>/worktrees/` and ask which one with
+`AskUserQuestion`.
 
 ## Steps
 
@@ -24,8 +25,10 @@ not inside a worktree, list `<repo_root>/worktrees/` and ask.
    more to do, is a milestone: it gets frozen by `milestone` first, and this run
    then writes the next plan onto a clean top level. Check with
    `flowy ticket status -w <workstream-name>` and read the existing goal - a
-   drained queue with the goal met is the signal. Ask rather than guess; step 3
-   overwrites, and a finished plan overwritten without being frozen is gone.
+   drained queue with the goal met is the signal. Ask with `AskUserQuestion`
+   rather than guess - overwrite this plan, or freeze it with `milestone`
+   first - because step 3 overwrites, and a finished plan overwritten without
+   being frozen is gone.
 
 2. **Explore the codebase.** Delegate to an `Explore` subagent
    (subagent_type: Explore). Hand it the worktree path from `meta.toml` and ask
