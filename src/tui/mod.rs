@@ -51,6 +51,7 @@ pub struct App {
     pub worktrees: Option<Vec<WorktreeInfo>>,
     pub worktree_preview: Vec<(u32, String)>,
     pub query: String,
+    pub pending_only: bool,
     pub ticket_selected: usize,
     pub worktree_selected: usize,
     // Index of the first visible row in each list. Persisted across frames so
@@ -75,8 +76,11 @@ impl App {
     }
 
     pub fn filtered_tickets(&self) -> Vec<usize> {
+        let candidates = (0..self.tickets.len())
+            .filter(|&i| !self.pending_only || self.tickets[i].status == Status::Pending);
+
         if self.query.is_empty() {
-            return (0..self.tickets.len()).collect();
+            return candidates.collect();
         }
 
         let pattern = Pattern::parse(&self.query, CaseMatching::Smart, Normalization::Smart);
@@ -84,7 +88,8 @@ impl App {
         let mut buf = Vec::new();
         let mut results: Vec<(usize, u32)> = Vec::new();
 
-        for (i, t) in self.tickets.iter().enumerate() {
+        for i in candidates {
+            let t = &self.tickets[i];
             let haystack = format!("{}\n{}", t.title, t.content);
             let hs = Utf32Str::new(&haystack, &mut buf);
             if let Some(score) = pattern.score(hs, &mut matcher) {
@@ -101,6 +106,7 @@ impl App {
         self.tickets = load_tui_tickets(ws_dir);
         self.ticket_selected = 0;
         self.query.clear();
+        self.pending_only = false;
         self.ticket_offset = 0;
         self.input_mode = InputMode::Normal;
     }
@@ -178,6 +184,12 @@ impl App {
                 }
                 KeyCode::Char('i') => {
                     self.input_mode = InputMode::Search;
+                }
+                KeyCode::Char('o') => {
+                    self.pending_only = !self.pending_only;
+                    let new_len = self.filtered_tickets().len();
+                    self.ticket_selected = self.ticket_selected.min(new_len.saturating_sub(1));
+                    self.ticket_offset = 0;
                 }
                 // The list is priority-sorted at load, but a cycled ticket keeps its
                 // row until the next load: resorting under the cursor would move the
@@ -380,6 +392,7 @@ pub fn run(root: &Path) -> Result<()> {
         worktrees: None,
         worktree_preview: Vec::new(),
         query: String::new(),
+        pending_only: false,
         ticket_selected: 0,
         worktree_selected: 0,
         ticket_offset: 0,
@@ -468,6 +481,7 @@ mod tests {
             worktrees: Some(Vec::new()),
             worktree_preview: Vec::new(),
             query: String::new(),
+            pending_only: false,
             ticket_selected: 0,
             worktree_selected: 0,
             ticket_offset: 0,
@@ -561,6 +575,23 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("priority = \"high\""));
         assert!(content.ends_with("+++\n\nBody.\n"));
+    }
+
+    #[test]
+    fn o_filters_to_pending_tickets_and_clamps_the_selection() {
+        let mut app = app_with_tickets(3);
+        app.tickets[1].status = Status::Complete;
+        app.tickets[2].status = Status::WontImplement;
+        app.ticket_selected = 2;
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+        assert!(app.pending_only);
+        assert_eq!(app.filtered_tickets(), vec![0]);
+        assert_eq!(app.ticket_selected, 0);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+        assert!(!app.pending_only);
+        assert_eq!(app.filtered_tickets(), vec![0, 1, 2]);
     }
 
     #[test]

@@ -90,19 +90,24 @@ fn render_tickets(f: &mut Frame, app: &mut App, left: Rect, right: Rect) {
         ),
     };
 
+    let mut title = vec![
+        Span::raw(" "),
+        Span::styled(
+            app.active_workstream.as_str(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+    ];
+    if app.pending_only {
+        title.push(Span::styled("[open] ", Style::default().fg(Color::Green)));
+    }
+
     let search_block = Block::default()
         .borders(Borders::ALL)
         .border_style(search_border_style)
-        .title(Line::from(vec![
-            Span::raw(" "),
-            Span::styled(
-                app.active_workstream.as_str(),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" "),
-        ]));
+        .title(Line::from(title));
     f.render_widget(
         Paragraph::new(search_text).block(search_block),
         left_chunks[0],
@@ -271,6 +276,8 @@ fn render_help(f: &mut Frame, app: &App, area: Rect) {
             Span::raw(" cycle priority  "),
             Span::styled("i", key_style),
             Span::raw(" search  "),
+            Span::styled("o", key_style),
+            Span::raw(" open only  "),
             Span::styled("enter", key_style),
             Span::raw(" edit  "),
             Span::styled("q / C-c", key_style),

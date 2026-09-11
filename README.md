@@ -170,7 +170,8 @@ exists are reported rather than moved. `--dry-run` reports without moving.
 
 Launch the interactive terminal UI. The ticket list ranks high priority first;
 `s` cycles the selected ticket's status and `p` cycles its priority, writing
-each through to the file.
+each through to the file. `o` toggles the list down to pending tickets only, and
+composes with the `i` search filter.
 
 ### `flowy completions <shell>`
 
