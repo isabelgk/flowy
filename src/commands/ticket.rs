@@ -154,17 +154,7 @@ fn list(matches: &ArgMatches) -> Result<()> {
     if let Some((ws_name, ws_dir)) = single_ws {
         let tickets = filter_by_priority(filter_tickets(load_tickets(&ws_dir)?, filter), priority);
         if json {
-            let val: Vec<serde_json::Value> = tickets
-                .iter()
-                .map(|t| {
-                    serde_json::json!({
-                        "number": t.number,
-                        "title": t.title,
-                        "status": t.status,
-                        "priority": t.priority,
-                    })
-                })
-                .collect();
+            let val: Vec<serde_json::Value> = tickets.iter().map(ticket_json).collect();
             return print_json(&val);
         }
         print_ticket_table(&ws_name, &tickets);
@@ -186,13 +176,9 @@ fn list(matches: &ArgMatches) -> Result<()> {
                 .iter()
                 .flat_map(|(ws, tickets)| {
                     tickets.iter().map(move |t| {
-                        serde_json::json!({
-                            "workstream": ws,
-                            "number": t.number,
-                            "title": t.title,
-                            "status": t.status,
-                            "priority": t.priority,
-                        })
+                        let mut val = ticket_json(t);
+                        val["workstream"] = ws.as_str().into();
+                        val
                     })
                 })
                 .collect();
@@ -209,6 +195,15 @@ fn list(matches: &ArgMatches) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn ticket_json(t: &Ticket) -> serde_json::Value {
+    serde_json::json!({
+        "number": t.number,
+        "title": t.title,
+        "status": t.status,
+        "priority": t.priority,
+    })
 }
 
 fn render_ticket_content(content: &str) {
