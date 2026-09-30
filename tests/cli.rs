@@ -1152,14 +1152,6 @@ fn init_creates_project_structure() {
         ws_dir_in(&project, "main").is_dir(),
         "notes/workstreams/main should exist"
     );
-    assert!(
-        project
-            .join("notes")
-            .join("workstreams")
-            .join("archive")
-            .is_dir(),
-        "notes/workstreams/archive should exist"
-    );
 
     let meta = read_meta(&ws_dir_in(&project, "main"));
     assert_eq!(meta.worktree.branch, "main");

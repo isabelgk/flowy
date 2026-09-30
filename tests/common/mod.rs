@@ -58,10 +58,7 @@ pub fn ws_dir_in(root: &Path, name: &str) -> PathBuf {
 }
 
 pub fn archived_ws_dir_in(root: &Path, name: &str) -> PathBuf {
-    root.join("notes")
-        .join("workstreams")
-        .join("archive")
-        .join(name)
+    root.join(".flowy").join("archive").join(name)
 }
 
 pub struct TestRepo {
@@ -104,7 +101,6 @@ impl TestRepo {
 
         // Scaffold directories.
         std::fs::create_dir_all(root.join("worktrees")).unwrap();
-        std::fs::create_dir_all(root.join("notes").join("workstreams").join("archive")).unwrap();
 
         TestRepo { _dir: dir, root }
     }

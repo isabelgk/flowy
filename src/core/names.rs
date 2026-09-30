@@ -87,7 +87,7 @@ mod tests {
         let root = PathBuf::from("/repo");
         assert_eq!(
             archived_workstream_dir(&root, "my-branch"),
-            PathBuf::from("/repo/notes/workstreams/archive/my-branch")
+            PathBuf::from("/repo/.flowy/archive/my-branch")
         );
     }
 }

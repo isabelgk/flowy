@@ -28,13 +28,13 @@ project/
       next.md                         # rolling recommendation (by `next`)
       tickets/001.md                  # TOML frontmatter (+++): status, priority
       milestones/001-<slug>/          # a finished plan, frozen (by `milestone`)
-  notes/workstreams/archive/<name>/   # archived workstreams, same shape
+  .flowy/archive/<name>/              # archived workstreams, same shape
 ```
 
 A workstream's notes live **inside** the worktree they describe, so `cd`-ing
 into a worktree gives you its tickets too. Archived workstreams are the one
 exception: `flowy worktree archive` removes the worktree, so the notes move up
-to `notes/workstreams/archive/` to outlive it.
+to `.flowy/archive/` to outlive it.
 
 `repo_root` is the nearest ancestor of cwd containing `.bare/`. So:
 

@@ -89,7 +89,6 @@ pub fn init(matches: &ArgMatches) -> Result<()> {
 
     std::fs::write(root.join(".git"), "gitdir: ./.bare\n").context("writing .git pointer")?;
     std::fs::create_dir_all(root.join("worktrees")).context("creating worktrees/")?;
-    std::fs::create_dir_all(archive_root(&root)).context("creating notes/workstreams/archive/")?;
     ensure_local_excluded(&root)?;
 
     let worktree_path = root.join("worktrees").join("main");
@@ -167,7 +166,6 @@ pub fn clone(matches: &ArgMatches) -> Result<()> {
     std::fs::write(root.join(".git"), "gitdir: ./.bare\n").context("writing .git pointer")?;
 
     std::fs::create_dir_all(root.join("worktrees")).context("creating worktrees/")?;
-    std::fs::create_dir_all(archive_root(&root)).context("creating notes/workstreams/archive/")?;
     ensure_local_excluded(&root)?;
 
     // Detect the default branch and scaffold its worktree and notes.
@@ -675,7 +673,7 @@ fn archive(matches: &ArgMatches) -> Result<()> {
         if root.join("notes").join("workstreams").join(name).is_dir() {
             bail!(
                 "'{name}' still uses the old notes layout and has no worktree; \
-                 move notes/workstreams/{name} to notes/workstreams/archive/{name} by hand"
+                 move notes/workstreams/{name} to .flowy/archive/{name} by hand"
             );
         }
         bail!("no workstream named '{name}' to archive");
@@ -703,7 +701,7 @@ fn archive(matches: &ArgMatches) -> Result<()> {
     // failure leaves them intact rather than deleted with the worktree.
     let ws_dir = crate::core::names::workstream_dir(&root, name);
     let archive_dir = crate::core::names::archived_workstream_dir(&root, name);
-    std::fs::create_dir_all(archive_root(&root)).context("creating notes/workstreams/archive/")?;
+    std::fs::create_dir_all(archive_root(&root)).context("creating .flowy/archive/")?;
 
     // git refuses to remove a worktree holding submodules unless forced. The
     // dirty check above already covered their contents.

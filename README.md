@@ -9,6 +9,7 @@ markdown ticket files.
 project/
   .bare/                              # bare git repository
   .flowy/cache.json                   # per-worktree status cache
+  .flowy/archive/<name>/              # archived workstreams, same shape
   worktrees/<safe-name>/              # per-branch worktrees (/ replaced with -)
     .local/workstream/                # workstream state, colocated with the code
       meta.toml                       # branch + worktree path
@@ -18,13 +19,12 @@ project/
       milestones/<nnn>-<slug>/        # a plan carried to its goal, frozen
       tickets/
         001.md                        # TOML frontmatter encodes status + priority
-  notes/workstreams/archive/<name>/   # archived workstreams, same shape
 ```
 
 A workstream's notes live inside the worktree they describe, so `cd`-ing into a
 worktree gives you its tickets too. Archived workstreams are the exception:
-`wt archive` removes the worktree, so their notes move up to
-`notes/workstreams/archive/` to outlive it.
+`wt archive` removes the worktree, so their notes move up to `.flowy/archive/`
+to outlive it. `cache.json` is disposable, but `.flowy/` as a whole is not.
 
 `.local/` is added to the repo's `.bare/info/exclude` during scaffolding.
 Without it every worktree would report dirty and `git worktree remove` would

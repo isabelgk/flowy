@@ -17,7 +17,7 @@ pub fn find_repo_root() -> Result<PathBuf> {
 // Archived workstreams stay at the repo root: archiving removes the worktree,
 // so notes kept inside it would be destroyed by the thing meant to preserve them.
 pub fn archive_root(root: &Path) -> PathBuf {
-    root.join("notes").join("workstreams").join("archive")
+    root.join(".flowy").join("archive")
 }
 
 pub fn worktrees_dir(root: &Path) -> PathBuf {

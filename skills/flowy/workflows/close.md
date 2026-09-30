@@ -62,7 +62,7 @@ a worktree, list `<repo_root>/worktrees/` and ask which one with
    confirmed they want to discard them.
 
    This moves the notes out of the worktree to
-   `<repo_root>/notes/workstreams/archive/<name>/` before removing the worktree,
+   `<repo_root>/.flowy/archive/<name>/` before removing the worktree,
    so they outlive it, `milestones/` and all. `flowy worktree unarchive <name>`
    reverses both steps.
 
