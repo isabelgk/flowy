@@ -2,7 +2,6 @@ mod cli;
 mod commands;
 mod core;
 mod output;
-mod tui;
 mod web;
 
 fn main() {

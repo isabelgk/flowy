@@ -32,10 +32,6 @@ pub fn dispatch(matches: ArgMatches) -> Result<()> {
                 sub.get_flag("open"),
             )
         }
-        Some(("tui", _)) | None => {
-            let root = get_repo_root(&matches)?;
-            crate::tui::run(&root)
-        }
         Some(("completions", sub)) => {
             let shell = sub.get_one::<Shell>("shell").copied().unwrap();
             clap_complete::generate(

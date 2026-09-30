@@ -7,7 +7,7 @@ pub fn build() -> Command {
     Command::new("flowy")
         .version(clap::crate_version!())
         .about("Manage bare git worktrees and markdown tickets")
-        .arg_required_else_help(false)
+        .arg_required_else_help(true)
         .arg(
             Arg::new("repo-root")
                 .long("repo-root")
@@ -28,7 +28,6 @@ pub fn build() -> Command {
         .subcommand(ticket_cmd())
         .subcommand(notes_cmd())
         .subcommand(migrate_cmd())
-        .subcommand(tui_cmd())
         .subcommand(web_cmd())
         .subcommand(completions_cmd())
 }
@@ -337,10 +336,6 @@ fn migrate_cmd() -> Command {
                 .action(ArgAction::SetTrue)
                 .help("Report what would move without moving it"),
         )
-}
-
-fn tui_cmd() -> Command {
-    Command::new("tui").about("Launch the interactive terminal UI")
 }
 
 fn web_cmd() -> Command {

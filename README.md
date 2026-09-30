@@ -167,14 +167,6 @@ Move workstream notes from the old `notes/workstreams/<name>/` layout into
 into the worktree. The archive is left alone, and notes whose worktree no longer
 exists are reported rather than moved. `--dry-run` reports without moving.
 
-### `flowy tui`
-
-Launch the interactive terminal UI. The ticket list ranks high priority first;
-`s` cycles the selected ticket's status and `p` cycles its priority, writing
-each through to the file. The list opens filtered to pending tickets; `o`
-toggles completed and wont-implement tickets back in, and composes with the `i`
-search filter.
-
 ### `flowy web`
 
 Serve a browser UI for the repo's workstreams over HTTP.
