@@ -48,10 +48,20 @@ impl Server {
     }
 
     fn send(&self, method: &str, path: &str, origin: Option<&str>, body: &str) -> (u16, String) {
-        let mut request = format!(
-            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n",
-            self.port
-        );
+        let host = format!("127.0.0.1:{}", self.port);
+        self.send_to(&host, method, path, origin, body)
+    }
+
+    fn send_to(
+        &self,
+        host: &str,
+        method: &str,
+        path: &str,
+        origin: Option<&str>,
+        body: &str,
+    ) -> (u16, String) {
+        let mut request =
+            format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n");
         if let Some(origin) = origin {
             request.push_str(&format!("Origin: {origin}\r\n"));
         }
@@ -190,6 +200,29 @@ fn a_cross_origin_post_changes_nothing() {
     assert_eq!(status, 403);
 
     assert!(!repo.ticket("feat-web", 1).exists());
+}
+
+#[test]
+fn a_foreign_host_is_refused_even_with_a_matching_origin() {
+    let repo = repo_with_worktree();
+    let server = Server::start(&repo);
+    let evil = format!("evil.example:{}", server.port);
+
+    let (status, page) = server.send_to(&evil, "GET", "/w/feat-web", None, "");
+    assert_eq!(status, 403);
+    assert!(!page.contains("feat-web"), "{page}");
+
+    let origin = format!("http://{evil}");
+    let body = form(&[("title", "Rebound")]);
+    let (status, _) = server.send_to(&evil, "POST", "/w/feat-web/tickets", Some(&origin), &body);
+    assert_eq!(status, 403);
+    assert!(!repo.ticket("feat-web", 1).exists());
+
+    let localhost = format!("localhost:{}", server.port);
+    assert_eq!(
+        server.send_to(&localhost, "GET", "/w/feat-web", None, "").0,
+        200
+    );
 }
 
 #[test]

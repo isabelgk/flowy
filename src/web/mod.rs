@@ -45,13 +45,16 @@ struct NavState {
 struct App {
     root: PathBuf,
     nav: Arc<Mutex<NavState>>,
+    // `Host` header values this server answers to.
+    hosts: Arc<Vec<String>>,
 }
 
 impl App {
-    fn new(root: &Path) -> App {
+    fn new(root: &Path, hosts: Vec<String>) -> App {
         App {
             root: root.to_path_buf(),
             nav: Arc::new(Mutex::new(NavState::default())),
+            hosts: Arc::new(hosts),
         }
     }
 
@@ -129,13 +132,32 @@ pub fn run(root: &Path, host: &str, port: u16, open_browser: bool) -> Result<()>
     // Requests are served one at a time. Every mutation is a read-modify-write of
     // a markdown file, and a single thread is the cheapest way to keep two tabs
     // from interleaving halfway through one.
-    let app = App::new(root);
+    let app = App::new(root, allowed_hosts(host, bound.port()));
     for request in server.incoming_requests() {
         if let Err(e) = serve(&app, request) {
             eprintln!("flowy web: {e:#}");
         }
     }
     Ok(())
+}
+
+// A DNS-rebinding page reaches this server under its own hostname, so it is the
+// Host header, not Origin, that proves a request was addressed to loopback.
+fn allowed_hosts(host: &str, port: u16) -> Vec<String> {
+    let mut hosts = Vec::new();
+    for name in [host, "localhost", "127.0.0.1", "::1"] {
+        let name = if name.contains(':') {
+            format!("[{name}]")
+        } else {
+            name.to_string()
+        };
+        hosts.push(format!("{name}:{port}"));
+        // Browsers leave the default port out of Host.
+        if port == 80 {
+            hosts.push(name);
+        }
+    }
+    hosts
 }
 
 fn open_url(url: &str) {
@@ -183,6 +205,15 @@ impl Reply {
 fn serve(app: &App, mut request: Request) -> Result<()> {
     let method = request.method().as_str().to_string();
     let url = request.url().to_string();
+
+    let host = header(&request, "Host");
+    if !host.is_some_and(|h| app.hosts.iter().any(|a| a.eq_ignore_ascii_case(&h))) {
+        // No page and no sidebar: the workstream names are what a rebinding page
+        // would be after.
+        return request
+            .respond(Response::from_string("unknown host\n").with_status_code(403))
+            .context("writing response");
+    }
 
     let mut body = String::new();
     if method == "POST" {
@@ -296,18 +327,20 @@ fn route_reply(app: &App, method: &str, url: &str, body: &str, request: &Request
     }
 }
 
+fn header(request: &Request, name: &'static str) -> Option<String> {
+    request
+        .headers()
+        .iter()
+        .find(|h| h.field.equiv(name))
+        .map(|h| h.value.as_str().to_string())
+}
+
 // A form posted from any other page still arrives with the browser's cookies and
 // this server's authority, so a mutation has to prove it came from here. Browsers
 // send Origin on every POST, and a page served from somewhere else cannot forge it.
+// Host has already been checked against the allowlist, so matching it is enough.
 fn same_origin(request: &Request) -> bool {
-    let header = |name: &'static str| {
-        request
-            .headers()
-            .iter()
-            .find(|h| h.field.equiv(name))
-            .map(|h| h.value.as_str().to_string())
-    };
-    match (header("Origin"), header("Host")) {
+    match (header(request, "Origin"), header(request, "Host")) {
         (Some(origin), Some(host)) => {
             origin == format!("http://{host}") || origin == format!("https://{host}")
         }
@@ -595,6 +628,21 @@ mod tests {
         assert_eq!(parse_route("POST", "/w/a"), Route::NotFound);
         assert_eq!(parse_route("DELETE", "/w/a/t/1"), Route::NotFound);
         assert_eq!(parse_route("GET", "/../etc/passwd"), Route::NotFound);
+    }
+
+    #[test]
+    fn allowed_hosts_cover_the_loopback_names() {
+        let hosts = allowed_hosts("0.0.0.0", 8123);
+        for host in [
+            "0.0.0.0:8123",
+            "localhost:8123",
+            "127.0.0.1:8123",
+            "[::1]:8123",
+        ] {
+            assert!(hosts.contains(&host.to_string()), "{hosts:?}");
+        }
+        assert!(!hosts.contains(&"localhost".to_string()));
+        assert!(allowed_hosts("::1", 80).contains(&"[::1]".to_string()));
     }
 
     #[test]
