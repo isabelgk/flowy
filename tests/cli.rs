@@ -959,14 +959,14 @@ fn t_edit_opens_ticket_in_editor() {
 }
 
 #[test]
-fn t_infers_workstream_from_worktree_branch() {
+fn t_infers_workstream_from_worktree_cwd() {
     let repo = TestRepo::new();
     repo.cmd()
         .args(["wt", "new", "-b", "test/branch"])
         .assert()
         .success();
 
-    // No -w flag; workstream should be inferred from the worktree's checked-out branch.
+    // No -w flag; the worktree directory cwd sits in names the workstream.
     repo.cmd()
         .args(["t", "add", "My ticket"])
         .current_dir(repo.root.join("worktrees").join("test-branch"))
