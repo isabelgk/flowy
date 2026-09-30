@@ -161,7 +161,7 @@ fn log(matches: &ArgMatches) -> Result<()> {
     if !ws_dir.is_dir() {
         bail!("no workstream at {}", ws_dir.display());
     }
-    append_log(&ws_dir, text.trim())?;
+    append_log(&ws_dir, text)?;
 
     let path = ws_dir.join("status.md");
     if json {
