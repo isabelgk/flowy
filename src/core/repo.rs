@@ -48,7 +48,13 @@ pub fn cwd_worktree(root: &Path) -> Option<String> {
 // worktrees of the repo and is never committed.
 pub fn ensure_local_excluded(root: &Path) -> Result<()> {
     let path = root.join(".bare").join("info").join("exclude");
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    // Only a missing file may be treated as empty; any other read failure would
+    // have us overwrite the user's existing excludes.
+    let existing = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+    };
     if existing.lines().any(|l| l.trim() == ".local/") {
         return Ok(());
     }
@@ -62,4 +68,22 @@ pub fn ensure_local_excluded(root: &Path) -> Result<()> {
     }
     content.push_str("\n# flowy: workstream notes live here\n.local/\n");
     write_atomic(&path, content).with_context(|| format!("writing {}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unreadable_exclude_is_left_untouched() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let info = dir.path().join(".bare").join("info");
+        std::fs::create_dir_all(&info).unwrap();
+        let path = info.join("exclude");
+        let original = b"*.log\n\xff\n";
+        std::fs::write(&path, original).unwrap();
+
+        assert!(ensure_local_excluded(dir.path()).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
 }
