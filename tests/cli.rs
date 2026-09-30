@@ -1,5 +1,6 @@
 mod common;
 
+use assert_cmd::Command;
 use common::{TestRepo, archived_ws_dir_in, git_in, git_out, ws_dir_in};
 use predicates::prelude::*;
 use std::fs;
@@ -950,14 +951,54 @@ fn t_w_flag_overrides_inferred_branch() {
 #[test]
 fn t_no_branch_errors_with_helpful_message() {
     let repo = TestRepo::new();
-    // Run from a directory outside any git repo; git branch --show-current returns empty.
+    git_in(
+        &repo.root,
+        &["symbolic-ref", "HEAD", "refs/heads/no-such-worktree"],
+    );
+    // Run from a directory outside any git repo, which must not matter.
     let outside = tempfile::TempDir::new().unwrap();
     repo.cmd()
         .args(["t", "add", "My ticket"])
         .current_dir(outside.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("cannot infer workstream"));
+        .stderr(predicate::str::contains(
+            "no workstream named 'no-such-worktree'",
+        ));
+}
+
+#[test]
+fn branch_fallback_reads_the_repo_root_not_the_cwd() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "main"])
+        .assert()
+        .success();
+
+    let elsewhere = tempfile::TempDir::new().unwrap();
+    git_in(elsewhere.path(), &["init", "-b", "unrelated"]);
+    repo.cmd()
+        .args(["notes", "path"])
+        .current_dir(elsewhere.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("worktrees/main/.local/workstream"));
+}
+
+#[test]
+fn branch_fallback_reports_a_failing_git() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let root = dir.path().join("not-a-repo");
+    fs::create_dir_all(root.join("worktrees")).unwrap();
+    Command::cargo_bin("flowy")
+        .unwrap()
+        .arg("--repo-root")
+        .arg(&root)
+        .env("GIT_CEILING_DIRECTORIES", dir.path())
+        .args(["notes", "path"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("git branch --show-current failed"));
 }
 
 #[test]

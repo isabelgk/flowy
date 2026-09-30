@@ -74,10 +74,20 @@ pub fn resolve_workstream(matches: &ArgMatches, root: &Path) -> Result<(String, 
     } else if let Some(name) = cwd_worktree(root) {
         name
     } else {
+        // Asked of the repo root rather than the process cwd, which can be any
+        // other repository when --repo-root is given.
         let out = Command::new("git")
             .args(["branch", "--show-current"])
+            .current_dir(root)
             .output()
             .context("running git branch --show-current")?;
+        if !out.status.success() {
+            bail!(
+                "cannot infer workstream: git branch --show-current failed in {}: {}; use -w NAME",
+                root.display(),
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
         let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
         if branch.is_empty() {
             bail!("detached HEAD - cannot infer workstream; use -w NAME");
