@@ -606,7 +606,14 @@ fn archive(matches: &ArgMatches) -> Result<()> {
     let archive_dir = crate::core::names::archived_workstream_dir(&root, name);
     std::fs::create_dir_all(archive_root(&root)).context("creating notes/workstreams/archive/")?;
 
-    if ws_dir.exists() {
+    // git refuses to remove a worktree holding submodules unless forced. The
+    // dirty check above already covered their contents.
+    if worktree_path.exists() && !needs_force && has_submodules(&worktree_path)? {
+        needs_force = true;
+    }
+
+    let moved_notes = ws_dir.exists();
+    if moved_notes {
         std::fs::rename(&ws_dir, &archive_dir)
             .with_context(|| format!("moving {} to {}", ws_dir.display(), archive_dir.display()))?;
     }
@@ -621,7 +628,17 @@ fn archive(matches: &ArgMatches) -> Result<()> {
 
         let status = cmd.status().context("running git worktree remove")?;
         if !status.success() {
-            bail!("git worktree remove failed");
+            // A worktree that survives with its notes in archive/ is neither live
+            // nor archived, and neither `unarchive` nor `rename` can recover it.
+            if moved_notes {
+                std::fs::rename(&archive_dir, &ws_dir).with_context(|| {
+                    format!(
+                        "git worktree remove failed, and moving notes back from {} also failed",
+                        archive_dir.display()
+                    )
+                })?;
+            }
+            bail!("git worktree remove failed; {name} is left unarchived");
         }
     }
 
@@ -890,6 +907,12 @@ fn submodule_git_dirs(worktree: &Path) -> Result<Vec<(String, PathBuf)>> {
             Ok((path.to_string(), PathBuf::from(git_dir)))
         })
         .collect()
+}
+
+// A deinitialized submodule leaves no checkout but keeps its git dir under the
+// admin dir's modules/, and git still counts it.
+fn has_submodules(worktree: &Path) -> Result<bool> {
+    Ok(admin_dir(worktree)?.join("modules").is_dir() || !submodule_git_dirs(worktree)?.is_empty())
 }
 
 // The worktree's admin dir under .bare/worktrees/<id>, read from its .git file.

@@ -220,6 +220,70 @@ fn wt_archive_removes_worktree_and_moves_notes() {
 }
 
 #[test]
+fn wt_archive_removes_a_worktree_with_a_submodule() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat/sub"])
+        .assert()
+        .success();
+    let worktree = repo.root.join("worktrees").join("feat-sub");
+
+    let outside = repo.root.parent().unwrap().to_path_buf();
+    let sub_src = outside.join("subsrc");
+    git_in(&outside, &["init", "-b", "main", sub_src.to_str().unwrap()]);
+    git_in(&sub_src, &["commit", "--allow-empty", "-m", "sub init"]);
+    git_in(
+        &worktree,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub_src.to_str().unwrap(),
+            "sub",
+        ],
+    );
+    git_in(&worktree, &["commit", "-m", "add submodule"]);
+
+    repo.cmd()
+        .args(["wt", "archive", "feat-sub"])
+        .assert()
+        .success();
+
+    assert!(!worktree.exists(), "worktree should be removed");
+    assert!(archived_ws_dir_in(&repo.root, "feat-sub").exists());
+}
+
+#[test]
+fn wt_archive_restores_notes_when_removal_fails() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat/locked"])
+        .assert()
+        .success();
+    let worktree = repo.root.join("worktrees").join("feat-locked");
+    git_in(&worktree, &["worktree", "lock", worktree.to_str().unwrap()]);
+    repo.cmd()
+        .args(["t", "add", "-w", "feat-locked", "Survives"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .args(["wt", "archive", "feat-locked"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("left unarchived"));
+
+    assert!(worktree.exists());
+    assert!(!archived_ws_dir_in(&repo.root, "feat-locked").exists());
+    repo.cmd()
+        .args(["t", "list", "-w", "feat-locked"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Survives"));
+}
+
+#[test]
 fn wt_unarchive_restores_worktree_and_notes() {
     let repo = TestRepo::new();
     repo.cmd()
