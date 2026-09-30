@@ -1,13 +1,12 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use clap::ArgMatches;
 use comfy_table::{Cell, Color, ContentArrangement, Table};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use owo_colors::OwoColorize;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-use super::{get_repo_root, read_body_file, resolve_workstream, warn_skipped};
+use super::{get_repo_root, open_in_editor, read_body_file, resolve_workstream, warn_skipped};
 use crate::core::{
     atomic::write_atomic,
     meta::read_meta,
@@ -386,16 +385,7 @@ fn edit(matches: &ArgMatches) -> Result<()> {
 
     let path = &ticket.path;
     let editor = std::env::var("EDITOR").context("$EDITOR is not set")?;
-
-    let status = Command::new(&editor)
-        .arg(path)
-        .status()
-        .with_context(|| format!("running {editor}"))?;
-    if !status.success() {
-        bail!("editor exited with non-zero status");
-    }
-
-    Ok(())
+    open_in_editor(&editor, path)
 }
 
 struct SearchTicket {

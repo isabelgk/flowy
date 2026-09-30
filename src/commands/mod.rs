@@ -126,6 +126,22 @@ pub fn read_body_file(path: &str) -> Result<String> {
     std::fs::read_to_string(path).with_context(|| format!("reading {path}"))
 }
 
+// $EDITOR is a shell command line, not a program name (`code -w`, `emacsclient
+// -t`), so it goes through sh the way git runs it.
+pub fn open_in_editor(editor: &str, path: &Path) -> Result<()> {
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg(format!("{editor} \"$@\""))
+        .arg(editor)
+        .arg(path)
+        .status()
+        .with_context(|| format!("running {editor}"))?;
+    if !status.success() {
+        bail!("editor '{editor}' exited with {status}");
+    }
+    Ok(())
+}
+
 pub fn read_stdin() -> Result<String> {
     let mut buf = String::new();
     std::io::stdin()

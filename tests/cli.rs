@@ -2664,3 +2664,27 @@ fn wt_new_reports_safe_name_collision() {
         .failure()
         .stderr(predicate::str::contains("maps to workstream 'a-b'"));
 }
+
+#[test]
+fn t_edit_runs_editor_with_arguments() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "test/branch"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["t", "add", "-w", "test-branch", "My ticket"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .args(["t", "edit", "-w", "test-branch", "1"])
+        .env("EDITOR", "perl -pi -e s/My/Your/")
+        .assert()
+        .success();
+
+    let ticket = ws_dir_in(&repo.root, "test-branch")
+        .join("tickets")
+        .join("001.md");
+    assert!(fs::read_to_string(ticket).unwrap().contains("Your ticket"));
+}

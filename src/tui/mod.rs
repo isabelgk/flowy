@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, Result};
 use crossterm::{
@@ -11,6 +10,7 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use ratatui::{Terminal, backend::CrosstermBackend};
 
+use crate::commands::open_in_editor;
 use crate::commands::worktree::{WorktreeInfo, list_worktrees};
 use crate::core::{
     atomic::write_atomic,
@@ -65,6 +65,8 @@ pub struct App {
     // Inner height of the list pane, recorded each render so key handling can
     // size a half-page scroll.
     pub list_height: u16,
+    // Shown in place of the key help until the next key press.
+    pub error: Option<String>,
     pub should_quit: bool,
 }
 
@@ -165,6 +167,7 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return None;
         }
+        self.error = None;
         // In search, `q` is a character of the query.
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL)
             || key.code == KeyCode::Char('q') && self.input_mode == InputMode::Normal
@@ -433,6 +436,7 @@ pub fn run(root: &Path) -> Result<()> {
         ticket_offset: 0,
         worktree_offset: 0,
         list_height: 0,
+        error: None,
         should_quit: false,
     };
 
@@ -477,10 +481,11 @@ fn run_loop(
             let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
             disable_raw_mode()?;
             execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-            let _ = Command::new(&editor).arg(&path).status();
+            let opened = open_in_editor(&editor, &path);
             enable_raw_mode()?;
             execute!(terminal.backend_mut(), EnterAlternateScreen)?;
             terminal.clear()?;
+            app.error = opened.err().map(|e| format!("{e:#}"));
             // The editor may have changed status or priority behind the list.
             app.reload_tickets();
         }
@@ -574,6 +579,7 @@ mod tests {
             ticket_offset: 0,
             worktree_offset: 0,
             list_height: 0,
+            error: None,
             should_quit: false,
         }
     }
