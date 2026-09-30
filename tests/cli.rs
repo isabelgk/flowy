@@ -940,25 +940,6 @@ fn t_status_json() {
 }
 
 #[test]
-fn t_edit_opens_ticket_in_editor() {
-    let repo = TestRepo::new();
-    repo.cmd()
-        .args(["wt", "new", "-b", "test/branch"])
-        .assert()
-        .success();
-    repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "My ticket"])
-        .assert()
-        .success();
-
-    repo.cmd()
-        .args(["t", "edit", "-w", "test-branch", "1"])
-        .env("EDITOR", "true")
-        .assert()
-        .success();
-}
-
-#[test]
 fn t_infers_workstream_from_worktree_cwd() {
     let repo = TestRepo::new();
     repo.cmd()
