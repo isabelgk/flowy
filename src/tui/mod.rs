@@ -18,7 +18,8 @@ use crate::core::{
     notes::append_log,
     repo::cwd_worktree,
     ticket::{
-        Priority, Status, load_tickets, rewrite_status_and_append, ticket_path, write_priority,
+        Priority, Status, load_tickets_lenient, rewrite_status_and_append, ticket_path,
+        write_priority,
     },
 };
 
@@ -119,13 +120,12 @@ impl App {
         self.worktree_preview.clear();
         if let Some(wt) = self.worktree_list().get(self.worktree_selected) {
             let ws_dir = workstream_subdir(&wt.path);
-            if let Ok(tickets) = load_tickets(&ws_dir) {
-                self.worktree_preview = tickets
-                    .into_iter()
-                    .filter(|t| t.status == Status::Pending)
-                    .map(|t| (t.number, t.title))
-                    .collect();
-            }
+            self.worktree_preview = load_tickets_lenient(&ws_dir)
+                .0
+                .into_iter()
+                .filter(|t| t.status == Status::Pending)
+                .map(|t| (t.number, t.title))
+                .collect();
         }
     }
 
@@ -355,8 +355,8 @@ fn ticket_ws_dir(ticket: &TuiTicket) -> Result<&Path> {
 }
 
 fn load_tui_tickets(ws_dir: &Path) -> Vec<TuiTicket> {
-    load_tickets(ws_dir)
-        .unwrap_or_default()
+    load_tickets_lenient(ws_dir)
+        .0
         .into_iter()
         .map(|t| {
             let path = ticket_path(ws_dir, t.number);

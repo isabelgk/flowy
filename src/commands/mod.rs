@@ -86,6 +86,14 @@ pub fn resolve_workstream(matches: &ArgMatches, root: &Path) -> Result<(String, 
     Ok((name, dir))
 }
 
+// A broken ticket is reported rather than allowed to hide the rest of its
+// workstream from a view that spans many tickets.
+pub fn warn_skipped(workstream: &str, errors: &[anyhow::Error]) {
+    for e in errors {
+        eprintln!("warning: {workstream}: skipped {e:#}");
+    }
+}
+
 // Prose passed on the command line has to survive the shell's quoting rules,
 // which is where multi-line markdown full of backticks and quotes goes wrong.
 // Reading it from a file or a pipe sidesteps that entirely.

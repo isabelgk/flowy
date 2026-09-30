@@ -7,7 +7,7 @@ use owo_colors::OwoColorize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::{get_repo_root, read_body_file, resolve_workstream};
+use super::{get_repo_root, read_body_file, resolve_workstream, warn_skipped};
 use crate::core::{
     atomic::write_atomic,
     meta::read_meta,
@@ -15,8 +15,9 @@ use crate::core::{
     notes::append_log,
     repo::{cwd_worktree, worktrees_dir},
     ticket::{
-        Priority, Status, Ticket, append_journal, create_ticket, load_tickets, resolve_ticket,
-        rewrite_status_and_append, ticket_path, write_priority,
+        Priority, Status, Ticket, append_journal, create_ticket, load_tickets,
+        load_tickets_lenient, resolve_ticket, rewrite_status_and_append, ticket_path,
+        write_priority,
     },
 };
 use crate::output::print_json;
@@ -174,10 +175,9 @@ fn list(matches: &ArgMatches) -> Result<()> {
         let mut groups: Vec<(String, Vec<Ticket>)> = Vec::new();
 
         for (name, dir) in live_workstreams(&root) {
-            let tickets = filter_by_priority(
-                filter_tickets(load_tickets(&dir).unwrap_or_default(), filter),
-                priority,
-            );
+            let (tickets, errors) = load_tickets_lenient(&dir);
+            warn_skipped(&name, &errors);
+            let tickets = filter_by_priority(filter_tickets(tickets, filter), priority);
             if !tickets.is_empty() {
                 groups.push((name, tickets));
             }
@@ -422,7 +422,9 @@ fn collect_search_tickets(matches: &ArgMatches, root: &Path) -> Result<Vec<Searc
 
     let mut result = Vec::new();
     for (name, dir) in live_workstreams(root) {
-        for t in load_tickets(&dir).unwrap_or_default() {
+        let (tickets, errors) = load_tickets_lenient(&dir);
+        warn_skipped(&name, &errors);
+        for t in tickets {
             result.push(SearchTicket {
                 workstream: name.clone(),
                 number: t.number,
@@ -653,7 +655,8 @@ fn status(matches: &ArgMatches) -> Result<()> {
         .map(|m| m.worktree.branch)
         .unwrap_or_else(|| ws_name.clone());
 
-    let tickets = load_tickets(&ws_dir).unwrap_or_default();
+    let (tickets, errors) = load_tickets_lenient(&ws_dir);
+    warn_skipped(&ws_name, &errors);
     let pending = tickets
         .iter()
         .filter(|t| t.status == Status::Pending)

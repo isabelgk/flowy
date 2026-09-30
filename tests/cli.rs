@@ -315,6 +315,45 @@ fn wt_unarchive_restores_worktree_and_notes() {
 }
 
 #[test]
+fn a_broken_ticket_does_not_hide_the_rest() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat"])
+        .assert()
+        .success();
+    let tickets = repo.ws_dir("feat").join("tickets");
+    fs::write(tickets.join("001.md"), "+++\ntitle = \"Readable\"\n+++\n").unwrap();
+    fs::write(tickets.join("002.md"), "+++\ntitle = \"Unclosed\"\n").unwrap();
+    fs::write(
+        tickets.join("003.md"),
+        "+++\r\ntitle = \"Windows\"\r\n+++\r\n",
+    )
+    .unwrap();
+    fs::write(tickets.join("README.md"), "# Not a ticket\n").unwrap();
+
+    repo.cmd()
+        .args(["t", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Readable"))
+        .stdout(predicate::str::contains("Windows"))
+        .stderr(predicate::str::contains("002.md"))
+        .stderr(predicate::str::contains("README").not());
+
+    repo.cmd()
+        .args(["t", "status", "-w", "feat"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("2 pending / 2 total"));
+
+    repo.cmd()
+        .args(["t", "list", "-w", "feat"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("002.md"));
+}
+
+#[test]
 fn t_done_unknown_id_errors() {
     let repo = TestRepo::new();
     repo.cmd()

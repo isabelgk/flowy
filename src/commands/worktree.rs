@@ -11,7 +11,7 @@ use crate::core::{
     meta::{Meta, WorktreeMeta, read_meta, write_meta},
     names::safe_name,
     repo::{archive_root, ensure_local_excluded, find_repo_root, worktrees_dir},
-    ticket::{Status, load_tickets},
+    ticket::{Status, load_tickets_lenient},
 };
 use crate::output::print_json;
 
@@ -464,7 +464,8 @@ fn compute_worktree_entry(
     let (tickets_pending, tickets_total) = if mtime != 0 && mtime == entry.tickets_dir_mtime {
         (entry.tickets_pending, entry.tickets_total)
     } else {
-        let tickets = load_tickets(&ws_dir).unwrap_or_default();
+        // A ticket that does not parse is left out of the counts.
+        let (tickets, _) = load_tickets_lenient(&ws_dir);
         let pending = tickets
             .iter()
             .filter(|t| t.status == Status::Pending)
