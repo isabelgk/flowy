@@ -278,6 +278,11 @@ pub fn rewrite_priority(content: &str, priority: Priority) -> Result<String> {
     Ok(format!("+++\n{}\n+++\n{body}", fm.join("\n")))
 }
 
+// Whether a frontmatter line assigns `key`, however it is spaced or indented.
+fn is_key(line: &str, key: &str) -> bool {
+    line.split_once('=').is_some_and(|(k, _)| k.trim() == key)
+}
+
 // The `done` / `--reopen` / `--wont-implement` rewrite: replaces the status key
 // and appends a Summary section if the ticket does not already have one.
 pub fn rewrite_status_and_append(
@@ -296,18 +301,25 @@ pub fn rewrite_status_and_append(
 
     let result = if let Some(stripped) = content.strip_prefix("+++\n") {
         if let Some(end) = stripped.find("\n+++\n") {
-            let fm = &stripped[..end];
-            let new_fm: String = fm
+            let line = format!("status = \"{new_status}\"");
+            let mut replaced = false;
+            let mut fm: Vec<String> = stripped[..end]
                 .lines()
                 .map(|l| {
-                    if l.starts_with("status =") {
-                        format!("status = \"{new_status}\"")
+                    if is_key(l, "status") {
+                        replaced = true;
+                        line.clone()
                     } else {
                         l.to_string()
                     }
                 })
-                .collect::<Vec<_>>()
-                .join("\n");
+                .collect();
+            // parse_ticket reads a missing status as pending, so a ticket without
+            // one still needs the key written for the change to take effect.
+            if !replaced {
+                fm.push(line);
+            }
+            let new_fm = fm.join("\n");
             let after = &stripped[end + 5..];
             format!("+++\n{new_fm}\n+++\n{after}")
         } else {
@@ -665,6 +677,32 @@ mod create_tests {
         assert_eq!(
             out,
             "+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n"
+        );
+    }
+
+    #[test]
+    fn rewrite_status_matches_the_key_however_it_is_written() {
+        for line in [
+            "status=\"pending\"",
+            "  status = \"pending\"",
+            "status  =  'pending'",
+        ] {
+            let input = format!("+++\n{line}\ntitle = \"T\"\n+++\n");
+            let out = rewrite_status_and_append(&input, false, false, None);
+            assert_eq!(
+                out, "+++\nstatus = \"complete\"\ntitle = \"T\"\n+++\n",
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn rewrite_status_adds_a_missing_key() {
+        let input = "+++\ntitle = \"T\"\nstatus_note = \"x\"\n+++\n\nBody.\n";
+        let out = rewrite_status_and_append(input, false, true, None);
+        assert_eq!(
+            out,
+            "+++\ntitle = \"T\"\nstatus_note = \"x\"\nstatus = \"wont-implement\"\n+++\n\nBody.\n"
         );
     }
 
