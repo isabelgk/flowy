@@ -1,3 +1,4 @@
+use crate::core::atomic::write_atomic;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -24,7 +25,7 @@ pub fn read_meta(dir: &Path) -> Result<Meta> {
 pub fn write_meta(dir: &Path, meta: &Meta) -> Result<()> {
     let path = dir.join("meta.toml");
     let content = toml::to_string(meta).context("serializing meta.toml")?;
-    std::fs::write(&path, content).with_context(|| format!("writing {}", path.display()))
+    write_atomic(&path, content).with_context(|| format!("writing {}", path.display()))
 }
 
 #[cfg(test)]

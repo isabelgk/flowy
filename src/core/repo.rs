@@ -1,3 +1,4 @@
+use crate::core::atomic::write_atomic;
 use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 
@@ -60,5 +61,5 @@ pub fn ensure_local_excluded(root: &Path) -> Result<()> {
         content.push('\n');
     }
     content.push_str("\n# flowy: workstream notes live here\n.local/\n");
-    std::fs::write(&path, content).with_context(|| format!("writing {}", path.display()))
+    write_atomic(&path, content).with_context(|| format!("writing {}", path.display()))
 }

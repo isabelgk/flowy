@@ -9,6 +9,7 @@ use std::process::Command;
 
 use super::{get_repo_root, read_body_file, resolve_workstream};
 use crate::core::{
+    atomic::write_atomic,
     meta::read_meta,
     names::workstream_dir,
     notes::append_log,
@@ -293,7 +294,7 @@ fn done(matches: &ArgMatches) -> Result<()> {
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
 
     let new_content = rewrite_status_and_append(&content, reopen, wont_impl, summary.as_deref());
-    std::fs::write(&path, &new_content).with_context(|| format!("writing {}", path.display()))?;
+    write_atomic(&path, &new_content).with_context(|| format!("writing {}", path.display()))?;
 
     let action = if reopen {
         "reopen"
@@ -364,7 +365,7 @@ fn journal(matches: &ArgMatches) -> Result<()> {
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
 
     let (content, ts) = append_journal(&content, &text, heading.map(String::as_str));
-    std::fs::write(&path, &content).with_context(|| format!("writing {}", path.display()))?;
+    write_atomic(&path, &content).with_context(|| format!("writing {}", path.display()))?;
 
     if json {
         return print_json(&serde_json::json!({

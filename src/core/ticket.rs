@@ -1,3 +1,4 @@
+use crate::core::atomic::write_atomic;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::io::Write as _;
@@ -242,7 +243,7 @@ pub fn write_priority(path: &Path, priority: Priority) -> Result<()> {
     let content =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let updated = rewrite_priority(&content, priority)?;
-    std::fs::write(path, updated).with_context(|| format!("writing {}", path.display()))
+    write_atomic(path, updated).with_context(|| format!("writing {}", path.display()))
 }
 
 // Rewrites an existing `priority` key in place and otherwise appends one, so a

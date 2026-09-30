@@ -2,6 +2,7 @@ use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::core::atomic::write_atomic;
 use crate::core::notes::append_log;
 use crate::core::ticket::{
     Priority, Ticket, append_journal, create_ticket, parse_ticket, rewrite_body,
@@ -84,7 +85,7 @@ pub fn set_status(ws_dir: &Path, number: u32, form: &Form) -> Result<()> {
     let content =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let updated = rewrite_status_and_append(&content, reopen, wont_impl, form.filled("summary"));
-    std::fs::write(&path, updated).with_context(|| format!("writing {}", path.display()))?;
+    write_atomic(&path, updated).with_context(|| format!("writing {}", path.display()))?;
 
     append_log(ws_dir, &format!("{action} {number:03}"))
 }
@@ -107,7 +108,7 @@ pub fn add_journal(ws_dir: &Path, number: u32, form: &Form) -> Result<()> {
     let content =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let (updated, _) = append_journal(&content, text, form.filled("heading"));
-    std::fs::write(&path, updated).with_context(|| format!("writing {}", path.display()))
+    write_atomic(&path, updated).with_context(|| format!("writing {}", path.display()))
 }
 
 pub enum BodySave {
@@ -127,7 +128,7 @@ pub fn set_body(ws_dir: &Path, number: u32, form: &Form) -> Result<BodySave> {
     let content =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let updated = rewrite_body(&content, form.get("body"))?;
-    std::fs::write(&path, updated).with_context(|| format!("writing {}", path.display()))?;
+    write_atomic(&path, updated).with_context(|| format!("writing {}", path.display()))?;
 
     append_log(ws_dir, &format!("edited {number:03}"))?;
     Ok(BodySave::Saved)

@@ -13,6 +13,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::commands::worktree::{WorktreeInfo, list_worktrees};
 use crate::core::{
+    atomic::write_atomic,
     names::{workstream_dir, workstream_subdir},
     notes::append_log,
     repo::cwd_worktree,
@@ -329,7 +330,7 @@ fn write_ticket_status(ticket: &TuiTicket, new_status: &Status) -> Result<()> {
     let content =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let updated = rewrite_status_and_append(&content, reopen, wont_impl, None);
-    std::fs::write(path, updated).with_context(|| format!("writing {}", path.display()))?;
+    write_atomic(path, updated).with_context(|| format!("writing {}", path.display()))?;
     append_log(
         ticket_ws_dir(ticket)?,
         &format!("{action} {:03}", ticket.number),

@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::core::atomic::write_atomic;
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct WorktreeCache {
     pub head_sha: String,
@@ -35,6 +37,6 @@ pub fn save_cache(root: &Path, cache: &Cache) {
         let _ = std::fs::create_dir_all(parent);
     }
     if let Ok(json) = serde_json::to_vec_pretty(cache) {
-        let _ = std::fs::write(&path, json);
+        let _ = write_atomic(&path, json);
     }
 }
