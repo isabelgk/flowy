@@ -1779,6 +1779,37 @@ fn migrate_reports_notes_without_a_worktree() {
 }
 
 #[test]
+fn migrate_reports_a_workstream_started_before_migrating() {
+    let repo = TestRepo::new();
+    let old = seed_old_layout(&repo.root, "legacy", true);
+    repo.cmd()
+        .args(["t", "add", "-w", "legacy", "Filed too early"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .arg("migrate")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("conflict legacy"));
+
+    assert!(
+        old.join("tickets").join("001.md").exists(),
+        "old notes stay put"
+    );
+    let json: serde_json::Value = serde_json::from_slice(
+        &repo
+            .cmd()
+            .args(["--json", "migrate"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(json["workstreams"][0]["outcome"], "conflict");
+}
+
+#[test]
 fn migrate_leaves_archive_alone_and_is_idempotent() {
     let repo = TestRepo::new();
     seed_old_layout(&repo.root, "legacy", true);
