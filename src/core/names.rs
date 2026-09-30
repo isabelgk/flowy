@@ -24,7 +24,7 @@ pub fn workstream_dir(root: &Path, name: &str) -> PathBuf {
 // Same path relative to an already-known worktree, for callers that have the
 // worktree path but not the workstream name.
 pub fn workstream_subdir(worktree: &Path) -> PathBuf {
-    worktree.join(".local").join("workstream")
+    worktree.join(".local").join("flowy")
 }
 
 pub fn archived_workstream_dir(root: &Path, name: &str) -> PathBuf {
@@ -69,7 +69,7 @@ mod tests {
         let root = PathBuf::from("/repo");
         assert_eq!(
             workstream_dir(&root, "my-branch"),
-            PathBuf::from("/repo/wt/my-branch/.local/workstream")
+            PathBuf::from("/repo/wt/my-branch/.local/flowy")
         );
     }
 

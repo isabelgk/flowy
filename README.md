@@ -11,7 +11,7 @@ project/
   .flowy/cache.json                   # per-worktree status cache
   .flowy/archive/<name>/              # archived workstreams, same shape
   wt/<safe-name>/                     # per-branch worktrees (/ replaced with -)
-    .local/workstream/                # workstream state, colocated with the code
+    .local/flowy/                     # workstream state, colocated with the code
       meta.toml                       # branch + worktree path
       status.md                       # append-only activity log
       planning.md                     # the current plan, if there is one
@@ -164,10 +164,11 @@ this milestone or the next one is a judgement call.
 
 Move a repo scaffolded by an older flowy onto the current layout. Worktrees
 under `worktrees/` move to `wt/`, with git's admin pointers and any submodules
-repaired. Workstream notes in the old `notes/workstreams/<name>/` layout move
-into `<worktree>/.local/workstream/`. The archive is left alone, and a worktree
-whose target already exists, or notes whose worktree no longer exists, are
-reported rather than moved. Run it from outside `worktrees/`; after a failure
+repaired. Notes at `<worktree>/.local/workstream/` are renamed to
+`<worktree>/.local/flowy/`, and notes in the old `notes/workstreams/<name>/`
+layout move there too. The archive is left alone, and anything whose target
+already exists, or notes whose worktree no longer exists, are reported rather
+than moved. Run it from outside `worktrees/`; after a failure
 partway, re-running picks up where it stopped. `--dry-run` reports without
 moving.
 

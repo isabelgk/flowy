@@ -51,7 +51,7 @@ pub fn git_out(dir: &Path, args: &[&str]) -> String {
 /// Live workstream dir under an arbitrary project root, for tests that scaffold
 /// a project themselves (clone, init) rather than using TestRepo.
 pub fn ws_dir_in(root: &Path, name: &str) -> PathBuf {
-    root.join("wt").join(name).join(".local").join("workstream")
+    root.join("wt").join(name).join(".local").join("flowy")
 }
 
 pub fn archived_ws_dir_in(root: &Path, name: &str) -> PathBuf {

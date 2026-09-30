@@ -42,7 +42,7 @@ pub fn cwd_worktree(root: &Path) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-// Workstream state lives at <worktree>/.local/workstream, inside the working
+// Workstream state lives at <worktree>/.local/flowy, inside the working
 // tree, so git must be told to ignore it or every worktree reads as dirty and
 // `git worktree remove` refuses without --force. info/exclude covers all
 // worktrees of the repo and is never committed.

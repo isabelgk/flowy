@@ -249,7 +249,7 @@ fn a_workstream_name_cannot_escape_the_worktrees_dir() {
     let absolute = form_urlencoded::byte_serialize(outside.path().to_str().unwrap().as_bytes())
         .collect::<String>()
         .replace('+', "%20");
-    let target = outside.path().join(".local/workstream/tickets/1.md");
+    let target = outside.path().join(".local/flowy/tickets/1.md");
     for name in [absolute.as_str(), "..%2Fwt%2Ffeat-web"] {
         let body = form(&[("title", "Escaped")]);
         let (status, _) = server.post(&format!("/w/{name}/tickets"), &body);

@@ -21,7 +21,7 @@ way it does.
 project/
   .bare/                              # bare git repository
   wt/<safe-name>/                     # one per branch (/ replaced with -)
-    .local/workstream/                # this workstream's notes
+    .local/flowy/                     # this workstream's notes
       meta.toml                       # branch + worktree path
       status.md                       # append-only activity log
       planning.md                     # narrative plan (written by `plan`)
@@ -39,7 +39,7 @@ to `.flowy/archive/` to outlive it.
 `repo_root` is the nearest ancestor of cwd containing `.bare/`. So:
 
 ```
-ws_dir = <repo_root>/wt/<name>/.local/workstream
+ws_dir = <repo_root>/wt/<name>/.local/flowy
 ```
 
 `flowy` does that walk-up itself, so you only need to resolve `repo_root` by

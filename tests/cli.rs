@@ -1045,7 +1045,7 @@ fn branch_fallback_reads_the_repo_root_not_the_cwd() {
         .current_dir(elsewhere.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("wt/main/.local/workstream"));
+        .stdout(predicate::str::contains("wt/main/.local/flowy"));
 }
 
 #[test]
@@ -1883,6 +1883,60 @@ fn migrate_dry_run_plans_worktree_and_notes_moves_together() {
 
     repo.cmd().arg("migrate").assert().success();
     assert!(repo.ws_dir("legacy").join("tickets/001.md").exists());
+}
+
+#[test]
+fn migrate_renames_the_old_notes_dir_in_place() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat"])
+        .assert()
+        .success();
+    let local = repo.root.join("wt/feat/.local");
+    fs::rename(local.join("flowy"), local.join("workstream")).unwrap();
+
+    repo.cmd()
+        .arg("migrate")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("moved notes feat"));
+
+    assert!(!local.join("workstream").exists());
+    assert!(repo.ws_dir("feat").join("meta.toml").is_file());
+}
+
+#[test]
+fn migrate_dry_run_plans_the_notes_rename_of_a_worktree_it_would_move() {
+    let repo = TestRepo::new();
+    let old = seed_old_worktree(&repo.root, "legacy");
+
+    repo.cmd()
+        .args(["migrate", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("would move worktree legacy"))
+        .stdout(predicate::str::contains("would move notes legacy"));
+
+    assert!(old.join(".local/workstream").is_dir());
+}
+
+#[test]
+fn migrate_leaves_old_notes_when_the_new_dir_exists() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat"])
+        .assert()
+        .success();
+    let old = repo.root.join("wt/feat/.local/workstream");
+    fs::create_dir_all(&old).unwrap();
+
+    repo.cmd()
+        .arg("migrate")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("conflict notes feat"));
+
+    assert!(old.is_dir(), "old notes stay put");
 }
 
 #[test]
