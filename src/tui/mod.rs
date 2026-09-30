@@ -352,19 +352,14 @@ fn next_status(status: &Status) -> Status {
 
 // Logs to status.md alongside the write, as the CLI and web UI do.
 fn write_ticket_status(ticket: &TuiTicket, new_status: &Status) -> Result<()> {
-    let (reopen, wont_impl, action) = match new_status {
-        Status::Pending => (true, false, "reopen"),
-        Status::Complete => (false, false, "done"),
-        Status::WontImplement => (false, true, "wont-implement"),
-    };
     let path = &ticket.path;
     let content =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let updated = rewrite_status_and_append(&content, reopen, wont_impl, None);
+    let updated = rewrite_status_and_append(&content, *new_status, None);
     write_atomic(path, updated).with_context(|| format!("writing {}", path.display()))?;
     append_log(
         ticket_ws_dir(ticket)?,
-        &format!("{action} {:03}", ticket.number),
+        &format!("{} {:03}", new_status.verb(), ticket.number),
     )
 }
 

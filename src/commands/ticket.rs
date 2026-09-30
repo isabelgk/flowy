@@ -280,8 +280,13 @@ fn done(matches: &ArgMatches) -> Result<()> {
     let json = matches.get_flag("json");
     let id = matches.get_one::<String>("id").unwrap();
     let summary = body_arg(matches, "summary")?;
-    let wont_impl = matches.get_flag("wont-implement");
-    let reopen = matches.get_flag("reopen");
+    let status = if matches.get_flag("reopen") {
+        Status::Pending
+    } else if matches.get_flag("wont-implement") {
+        Status::WontImplement
+    } else {
+        Status::Complete
+    };
 
     let (_, ws_dir) = resolve_workstream(matches, &root)?;
     let tickets = load_tickets(&ws_dir)?;
@@ -291,29 +296,16 @@ fn done(matches: &ArgMatches) -> Result<()> {
     let content =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
 
-    let new_content = rewrite_status_and_append(&content, reopen, wont_impl, summary.as_deref());
+    let new_content = rewrite_status_and_append(&content, status, summary.as_deref());
     write_atomic(path, &new_content).with_context(|| format!("writing {}", path.display()))?;
 
-    let action = if reopen {
-        "reopen"
-    } else if wont_impl {
-        "wont-implement"
-    } else {
-        "done"
-    };
+    let action = status.verb();
     append_log(&ws_dir, &format!("{action} {:03}", ticket.number))?;
 
     if json {
-        let status_str = if reopen {
-            "pending"
-        } else if wont_impl {
-            "wont-implement"
-        } else {
-            "complete"
-        };
         return print_json(&serde_json::json!({
             "number": ticket.number,
-            "status": status_str,
+            "status": status,
         }));
     }
     println!("{action} {:03}", ticket.number);

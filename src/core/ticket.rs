@@ -8,12 +8,31 @@ use std::path::{Path, PathBuf};
 // cannot accept a new file fails instead of looping.
 const RACE_RETRY_LIMIT: u32 = 1000;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Status {
     Pending,
     Complete,
     WontImplement,
+}
+
+impl Status {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Status::Pending => "pending",
+            Status::Complete => "complete",
+            Status::WontImplement => "wont-implement",
+        }
+    }
+
+    // How status.md and the CLI report a move to this status.
+    pub fn verb(self) -> &'static str {
+        match self {
+            Status::Pending => "reopen",
+            Status::Complete => "done",
+            Status::WontImplement => "wont-implement",
+        }
+    }
 }
 
 // Ordered high-to-low: deriving Ord over the declaration order is what makes
@@ -393,20 +412,8 @@ fn is_key(line: &str, key: &str) -> bool {
 
 // The `done` / `--reopen` / `--wont-implement` rewrite: replaces the status key
 // and adds the summary, if given, to the ticket's Summary section.
-pub fn rewrite_status_and_append(
-    content: &str,
-    reopen: bool,
-    wont_impl: bool,
-    summary: Option<&str>,
-) -> String {
-    let new_status = if reopen {
-        "pending"
-    } else if wont_impl {
-        "wont-implement"
-    } else {
-        "complete"
-    };
-
+pub fn rewrite_status_and_append(content: &str, status: Status, summary: Option<&str>) -> String {
+    let new_status = status.as_str();
     let result = match split_frontmatter(content) {
         Some((fm, after)) => {
             // parse_ticket reads a missing status as pending, so a ticket without
@@ -675,7 +682,7 @@ mod tests {
     #[test]
     fn rewrites_accept_crlf_frontmatter() {
         let input = "+++\r\nstatus = \"pending\"\r\ntitle = \"T\"\r\n+++\r\n\r\nBody.\r\n";
-        let done = rewrite_status_and_append(input, false, false, None);
+        let done = rewrite_status_and_append(input, Status::Complete, None);
         assert!(done.contains("status = \"complete\""), "{done:?}");
         assert!(done.ends_with("+++\n\r\nBody.\r\n"), "{done:?}");
         assert!(
@@ -871,7 +878,7 @@ mod create_tests {
     #[test]
     fn rewrite_status_pending_to_complete() {
         let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n";
-        let out = rewrite_status_and_append(input, false, false, None);
+        let out = rewrite_status_and_append(input, Status::Complete, None);
         assert_eq!(
             out,
             "+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n"
@@ -886,7 +893,7 @@ mod create_tests {
             "status  =  'pending'",
         ] {
             let input = format!("+++\n{line}\ntitle = \"T\"\n+++\n");
-            let out = rewrite_status_and_append(&input, false, false, None);
+            let out = rewrite_status_and_append(&input, Status::Complete, None);
             assert_eq!(
                 out, "+++\nstatus = \"complete\"\ntitle = \"T\"\n+++\n",
                 "{line}"
@@ -897,7 +904,7 @@ mod create_tests {
     #[test]
     fn rewrite_status_adds_a_missing_key() {
         let input = "+++\ntitle = \"T\"\nstatus_note = \"x\"\n+++\n\nBody.\n";
-        let out = rewrite_status_and_append(input, false, true, None);
+        let out = rewrite_status_and_append(input, Status::WontImplement, None);
         assert_eq!(
             out,
             "+++\ntitle = \"T\"\nstatus_note = \"x\"\nstatus = \"wont-implement\"\n+++\n\nBody.\n"
@@ -907,7 +914,7 @@ mod create_tests {
     #[test]
     fn rewrite_status_complete_with_summary() {
         let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n";
-        let out = rewrite_status_and_append(input, false, false, Some("Done"));
+        let out = rewrite_status_and_append(input, Status::Complete, Some("Done"));
         assert!(out.starts_with("+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n"));
         assert!(out.contains("\n## Summary\n\nDone\n"));
     }
@@ -916,7 +923,7 @@ mod create_tests {
     fn rewrite_status_fills_an_existing_summary_section() {
         let input =
             "+++\nstatus = \"pending\"\ntitle = \"T\"\n+++\n\n## Summary\n\n## Journal\n\nEntry.\n";
-        let out = rewrite_status_and_append(input, false, false, Some("New"));
+        let out = rewrite_status_and_append(input, Status::Complete, Some("New"));
         assert!(
             out.ends_with("\n## Summary\n\nNew\n\n## Journal\n\nEntry.\n"),
             "{out}"
@@ -926,14 +933,14 @@ mod create_tests {
     #[test]
     fn rewrite_status_adds_to_a_summary_left_by_an_earlier_close() {
         let input = "+++\nstatus = \"pending\"\ntitle = \"T\"\n+++\n\n## Summary\n\nOld.\n";
-        let out = rewrite_status_and_append(input, false, false, Some("New"));
+        let out = rewrite_status_and_append(input, Status::Complete, Some("New"));
         assert!(out.ends_with("\n## Summary\n\nOld.\n\nNew\n"), "{out}");
     }
 
     #[test]
     fn rewrite_status_pending_to_wont_implement() {
         let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n";
-        let out = rewrite_status_and_append(input, false, true, None);
+        let out = rewrite_status_and_append(input, Status::WontImplement, None);
         assert_eq!(
             out,
             "+++\nstatus = \"wont-implement\"\ntitle = \"My Task\"\n+++\n"
@@ -943,21 +950,21 @@ mod create_tests {
     #[test]
     fn rewrite_status_complete_to_reopen() {
         let input = "+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n";
-        let out = rewrite_status_and_append(input, true, false, None);
+        let out = rewrite_status_and_append(input, Status::Pending, None);
         assert_eq!(out, "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n");
     }
 
     #[test]
     fn rewrite_status_wont_implement_to_reopen() {
         let input = "+++\nstatus = \"wont-implement\"\ntitle = \"My Task\"\n+++\n";
-        let out = rewrite_status_and_append(input, true, false, None);
+        let out = rewrite_status_and_append(input, Status::Pending, None);
         assert_eq!(out, "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n");
     }
 
     #[test]
     fn rewrite_status_multiline_body_preserved() {
         let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n\nSome body text.\n\n## Section\n\nMore content.\n";
-        let out = rewrite_status_and_append(input, false, false, None);
+        let out = rewrite_status_and_append(input, Status::Complete, None);
         assert!(out.starts_with("+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n"));
         assert!(out.contains("Some body text."));
         assert!(out.contains("## Section"));

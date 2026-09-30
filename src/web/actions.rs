@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::core::atomic::write_atomic;
 use crate::core::notes::append_log;
 use crate::core::ticket::{
-    Priority, Ticket, append_journal, create_ticket, find_ticket, rewrite_body,
+    Priority, Status, Ticket, append_journal, create_ticket, find_ticket, rewrite_body,
     rewrite_status_and_append, write_priority,
 };
 
@@ -70,21 +70,20 @@ pub fn add_ticket(ws_dir: &Path, form: &Form) -> Result<u32> {
 }
 
 pub fn set_status(ws_dir: &Path, number: u32, form: &Form) -> Result<()> {
-    let action = form.get("action");
-    let (reopen, wont_impl) = match action {
-        "done" => (false, false),
-        "wont-implement" => (false, true),
-        "reopen" => (true, false),
+    let status = match form.get("action") {
+        "done" => Status::Complete,
+        "wont-implement" => Status::WontImplement,
+        "reopen" => Status::Pending,
         other => bail!("unknown status action {other:?}"),
     };
 
     let (path, _) = read_ticket(ws_dir, number)?;
     let content =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let updated = rewrite_status_and_append(&content, reopen, wont_impl, form.filled("summary"));
+    let updated = rewrite_status_and_append(&content, status, form.filled("summary"));
     write_atomic(&path, updated).with_context(|| format!("writing {}", path.display()))?;
 
-    append_log(ws_dir, &format!("{action} {number:03}"))
+    append_log(ws_dir, &format!("{} {number:03}", status.verb()))
 }
 
 pub fn set_priority(ws_dir: &Path, number: u32, form: &Form) -> Result<()> {
