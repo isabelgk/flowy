@@ -68,6 +68,10 @@ Manage bare git worktrees.
 | `unarchive` | | Restore an archived workstream |
 | `rename` | `mv` | Rename a workstream: branch, worktree dir, and meta |
 
+`new`, `unarchive`, and `flowy clone` initialize submodules in the worktree they
+check out, recursively. Pass `--no-submodules` to skip it. A failed submodule
+fetch is a warning, not an error: the worktree is still created.
+
 `rename <old-name> <new-branch>` renames the git branch, moves the worktree to
 the new safe-name, and updates `meta.toml`. Notes travel with the worktree
 because they live inside it. Worktrees containing submodules (which `git

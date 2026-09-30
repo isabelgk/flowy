@@ -2877,3 +2877,76 @@ fn clone_refuses_an_existing_target() {
         .stderr(predicate::str::contains("'project' already exists"));
     assert!(!tmp.path().join("project").join(".bare").exists());
 }
+
+// A `feat` worktree whose branch carries a committed submodule at `sub`.
+fn repo_with_submodule_branch() -> TestRepo {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat"])
+        .assert()
+        .success();
+    let wt = repo.root.join("wt").join("feat");
+    let outside = repo.root.parent().unwrap().to_path_buf();
+    let sub_src = outside.join("subsrc");
+    git_in(&outside, &["init", "-b", "main", sub_src.to_str().unwrap()]);
+    git_in(&sub_src, &["commit", "--allow-empty", "-m", "sub init"]);
+    git_in(
+        &wt,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub_src.to_str().unwrap(),
+            "sub",
+        ],
+    );
+    git_in(&wt, &["commit", "-m", "add submodule"]);
+    repo
+}
+
+// file:// submodules are blocked by default since git 2.38.
+fn allowing_file_protocol(mut cmd: Command) -> Command {
+    cmd.env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "protocol.file.allow")
+        .env("GIT_CONFIG_VALUE_0", "always");
+    cmd
+}
+
+#[test]
+fn wt_new_initializes_submodules() {
+    let repo = repo_with_submodule_branch();
+
+    allowing_file_protocol(repo.cmd())
+        .args(["wt", "new", "-b", "child", "feat"])
+        .assert()
+        .success();
+
+    assert!(repo.root.join("wt/child/sub/.git").exists());
+}
+
+#[test]
+fn wt_new_no_submodules_leaves_them_uninitialized() {
+    let repo = repo_with_submodule_branch();
+
+    allowing_file_protocol(repo.cmd())
+        .args(["wt", "new", "-b", "child", "feat", "--no-submodules"])
+        .assert()
+        .success();
+
+    assert!(!repo.root.join("wt/child/sub/.git").exists());
+}
+
+#[test]
+fn wt_new_warns_but_succeeds_when_submodules_fail() {
+    let repo = repo_with_submodule_branch();
+
+    // Without the protocol override git refuses the file:// submodule.
+    repo.cmd()
+        .args(["wt", "new", "-b", "child", "feat"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("initializing submodules failed"));
+
+    assert!(repo.ws_dir("child").join("meta.toml").is_file());
+}

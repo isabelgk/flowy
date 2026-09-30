@@ -43,6 +43,14 @@ fn clone_cmd() -> Command {
         .about("Clone a bare repo and scaffold the project structure")
         .arg(Arg::new("url").required(true).index(1))
         .arg(Arg::new("name").index(2))
+        .arg(no_submodules_arg())
+}
+
+fn no_submodules_arg() -> Arg {
+    Arg::new("no-submodules")
+        .long("no-submodules")
+        .action(ArgAction::SetTrue)
+        .help("Leave submodules uninitialized in the new worktree")
 }
 
 fn worktree_cmd() -> Command {
@@ -59,7 +67,8 @@ fn worktree_cmd() -> Command {
                         .required(true)
                         .value_name("BRANCH"),
                 )
-                .arg(Arg::new("start-point").index(1).value_name("START_POINT")),
+                .arg(Arg::new("start-point").index(1).value_name("START_POINT"))
+                .arg(no_submodules_arg()),
         )
         .subcommand(
             Command::new("ls").about("List worktrees with status, ticket counts, and branch age"),
@@ -89,7 +98,8 @@ fn worktree_cmd() -> Command {
                         .required(true)
                         .index(1)
                         .value_parser(parse_workstream_name),
-                ),
+                )
+                .arg(no_submodules_arg()),
         )
         .subcommand(
             Command::new("rename")

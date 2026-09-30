@@ -208,6 +208,10 @@ pub fn clone(matches: &ArgMatches) -> Result<()> {
     };
     write_meta(&ws_dir, &meta)?;
 
+    if !matches.get_flag("no-submodules") {
+        init_submodules(&worktree_path);
+    }
+
     if json {
         return print_json(&serde_json::json!({"ok": true}));
     }
@@ -282,6 +286,10 @@ fn new(matches: &ArgMatches) -> Result<()> {
         },
     };
     write_meta(&ws_dir, &meta)?;
+
+    if !matches.get_flag("no-submodules") {
+        init_submodules(&worktree_path);
+    }
 
     if json {
         return print_json(&serde_json::json!({"ok": true}));
@@ -803,6 +811,10 @@ fn unarchive(matches: &ArgMatches) -> Result<()> {
         return Err(e);
     }
 
+    if !matches.get_flag("no-submodules") {
+        init_submodules(&worktree_path);
+    }
+
     if json {
         return print_json(&serde_json::json!({"ok": true}));
     }
@@ -1038,6 +1050,25 @@ fn repair_worktree_gitdir(root: &Path, new_worktree: &Path) -> Result<()> {
         bail!("git worktree repair failed for {}", new_worktree.display());
     }
     Ok(())
+}
+
+// A failure only warns: the worktree is already usable, and whatever broke the
+// fetch (network, auth) is outside flowy's reach.
+fn init_submodules(worktree: &Path) {
+    if !worktree.join(".gitmodules").is_file() {
+        return;
+    }
+    let ok = git()
+        .args(["submodule", "update", "--init", "--recursive"])
+        .current_dir(worktree)
+        .status()
+        .is_ok_and(|s| s.success());
+    if !ok {
+        eprintln!(
+            "warning: initializing submodules failed; run `git submodule update --init --recursive` in {}",
+            worktree.display()
+        );
+    }
 }
 
 fn report_partial(moved_branch: bool, old_branch: &str, new_branch: &str, moved_worktree: bool) {
