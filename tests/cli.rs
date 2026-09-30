@@ -993,11 +993,13 @@ fn t_no_branch_errors_with_helpful_message() {
         &repo.root,
         &["symbolic-ref", "HEAD", "refs/heads/no-such-worktree"],
     );
-    // Run from a directory outside any git repo, which must not matter.
+    // Run from a directory outside any git repo, which must not matter. The
+    // ceiling keeps that true when TMPDIR itself sits inside a repo.
     let outside = tempfile::TempDir::new().unwrap();
     repo.cmd()
         .args(["t", "add", "My ticket"])
         .current_dir(outside.path())
+        .env("GIT_CEILING_DIRECTORIES", outside.path())
         .assert()
         .failure()
         .stderr(predicate::str::contains(
