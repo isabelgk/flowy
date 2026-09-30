@@ -129,21 +129,27 @@ pub fn init(matches: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
+// The last component of a URL or scp-style `host:path` remote, without `.git`.
+fn clone_dir_name(url: &str) -> Result<String> {
+    let last = url
+        .trim_end_matches('/')
+        .rsplit(['/', ':'])
+        .next()
+        .unwrap_or("");
+    let name = last.strip_suffix(".git").unwrap_or(last);
+    if name.is_empty() || name == "." || name == ".." {
+        bail!("cannot derive a directory name from '{url}'; pass NAME");
+    }
+    Ok(name.to_string())
+}
+
 pub fn clone(matches: &ArgMatches) -> Result<()> {
     let json = matches.get_flag("json");
     let url = matches.get_one::<String>("url").unwrap();
 
-    let name = if let Some(n) = matches.get_one::<String>("name") {
-        n.clone()
-    } else {
-        // Derive from URL: take last path component, strip .git suffix
-        url.trim_end_matches('/')
-            .rsplit('/')
-            .next()
-            .or_else(|| url.rsplit(':').next())
-            .unwrap_or(url)
-            .trim_end_matches(".git")
-            .to_string()
+    let name = match matches.get_one::<String>("name") {
+        Some(n) => n.clone(),
+        None => clone_dir_name(url)?,
     };
 
     let status = git()
@@ -1048,6 +1054,15 @@ fn report_partial(moved_branch: bool, old_branch: &str, new_branch: &str, moved_
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clone_dir_name_handles_urls_and_scp_remotes() {
+        assert_eq!(clone_dir_name("https://h/u/repo.git").unwrap(), "repo");
+        assert_eq!(clone_dir_name("https://h/u/repo/").unwrap(), "repo");
+        assert_eq!(clone_dir_name("git@h:u/repo.git").unwrap(), "repo");
+        assert_eq!(clone_dir_name("host:repo.git").unwrap(), "repo");
+        assert!(clone_dir_name("host:").is_err());
+    }
 
     #[test]
     fn unborn_head_has_no_age() {
