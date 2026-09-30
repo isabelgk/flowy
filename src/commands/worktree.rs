@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
 use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table};
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
@@ -48,7 +48,7 @@ pub fn init(matches: &ArgMatches) -> Result<()> {
         .with_context(|| format!("resolving path for {name}"))?;
 
     let init_src = root.join(".init-src");
-    let status = Command::new("git")
+    let status = git()
         .args(["init", "-b", "main"])
         .arg(&init_src)
         .status()
@@ -57,7 +57,7 @@ pub fn init(matches: &ArgMatches) -> Result<()> {
         bail!("git init failed");
     }
 
-    let status = Command::new("git")
+    let status = git()
         .args([
             "commit",
             "--allow-empty",
@@ -73,7 +73,7 @@ pub fn init(matches: &ArgMatches) -> Result<()> {
     }
 
     let bare_dir = root.join(".bare");
-    let status = Command::new("git")
+    let status = git()
         .args(["clone", "--bare"])
         .arg(&init_src)
         .arg(&bare_dir)
@@ -85,7 +85,7 @@ pub fn init(matches: &ArgMatches) -> Result<()> {
 
     std::fs::remove_dir_all(&init_src).context("removing .init-src")?;
 
-    let status = Command::new("git")
+    let status = git()
         .args(["remote", "remove", "origin"])
         .current_dir(&bare_dir)
         .status()
@@ -100,7 +100,7 @@ pub fn init(matches: &ArgMatches) -> Result<()> {
     ensure_local_excluded(&root)?;
 
     let worktree_path = root.join("worktrees").join("main");
-    let status = Command::new("git")
+    let status = git()
         .args(["worktree", "add"])
         .arg(&worktree_path)
         .arg("main")
@@ -146,7 +146,7 @@ pub fn clone(matches: &ArgMatches) -> Result<()> {
             .to_string()
     };
 
-    let status = Command::new("git")
+    let status = git()
         .args(["clone", "--bare", url])
         .arg(PathBuf::from(&name).join(".bare"))
         .status()
@@ -186,7 +186,7 @@ pub fn clone(matches: &ArgMatches) -> Result<()> {
 
     let safe = safe_name(&default_branch);
     let worktree_path = root.join("worktrees").join(&safe);
-    let status = Command::new("git")
+    let status = git()
         .args(["worktree", "add"])
         .arg(&worktree_path)
         .arg(&default_branch)
@@ -240,7 +240,7 @@ fn new(matches: &ArgMatches) -> Result<()> {
         && start_point.is_none()
         && ref_exists(&format!("refs/remotes/origin/{branch}"));
 
-    let mut cmd = Command::new("git");
+    let mut cmd = git();
     cmd.arg("worktree").arg("add").arg(&worktree_path);
     if branch_exists {
         cmd.arg(branch);
@@ -535,6 +535,15 @@ fn tickets_fingerprint(ws_dir: &Path) -> u64 {
     hasher.finish().max(1)
 }
 
+// For git commands whose output is not captured. Some report on stdout ("HEAD is
+// now at ..."), which would land ahead of --json output, so stdout goes to
+// stderr with the rest of git's chatter.
+fn git() -> Command {
+    let mut cmd = Command::new("git");
+    cmd.stdout(std::io::stderr());
+    cmd
+}
+
 // A bare clone configures no fetch refspec, so `git fetch` would bring in no
 // origin/* refs and no branch could track its remote. Sets the refspec, fetches
 // once, and points every cloned branch at its origin counterpart.
@@ -665,8 +674,12 @@ fn archive(matches: &ArgMatches) -> Result<()> {
     // Check dirty status; if dirty and not forced, prompt the user
     let mut needs_force = force;
     if !force && worktree_path.exists() && is_dirty(&worktree_path)? {
-        print!("Worktree '{name}' has uncommitted changes. Archive anyway? [y/N] ");
-        io::stdout().flush()?;
+        // A prompt would corrupt JSON output, and nobody is there to answer it.
+        if json || !io::stdin().is_terminal() {
+            bail!("worktree '{name}' has uncommitted changes; pass --force to archive anyway");
+        }
+        eprint!("Worktree '{name}' has uncommitted changes. Archive anyway? [y/N] ");
+        io::stderr().flush()?;
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
         if !input.trim().eq_ignore_ascii_case("y") {
@@ -695,7 +708,7 @@ fn archive(matches: &ArgMatches) -> Result<()> {
     }
 
     if worktree_path.exists() {
-        let mut cmd = Command::new("git");
+        let mut cmd = git();
         cmd.arg("worktree").arg("remove");
         if needs_force {
             cmd.arg("--force");
@@ -744,7 +757,7 @@ fn unarchive(matches: &ArgMatches) -> Result<()> {
     // The worktree must exist before the notes can move into it, so create it
     // first and unwind it if the move fails.
     // Branch already exists in the bare repo; no -b flag needed.
-    let status = Command::new("git")
+    let status = git()
         .arg("worktree")
         .arg("add")
         .arg(&worktree_path)
@@ -774,7 +787,7 @@ fn unarchive(matches: &ArgMatches) -> Result<()> {
 
     if let Err(e) = restore {
         // Leave the workstream cleanly archived rather than half-restored.
-        let _ = Command::new("git")
+        let _ = git()
             .args(["worktree", "remove", "--force"])
             .arg(&worktree_path)
             .current_dir(root.join(".bare"))
@@ -852,7 +865,7 @@ fn rename(matches: &ArgMatches) -> Result<()> {
     let mut moved_branch = false;
 
     if renaming_branch {
-        let status = Command::new("git")
+        let status = git()
             .args(["branch", "-m", &old_branch, new_branch])
             .current_dir(root.join(".bare"))
             .status()
@@ -933,7 +946,7 @@ fn move_worktree(root: &Path, old: &Path, new: &Path) -> Result<()> {
         .with_context(|| format!("moving {} to {}", old.display(), new.display()))?;
     repair_worktree_gitdir(new)?;
     for (path, git_dir) in submodules {
-        let status = Command::new("git")
+        let status = git()
             .args(["config", "--file"])
             .arg(git_dir.join("config"))
             .arg("core.worktree")

@@ -1058,17 +1058,58 @@ fn branch_fallback_reports_a_failing_git() {
         .stderr(predicate::str::contains("git branch --show-current failed"));
 }
 
+fn stdout_json(cmd: &mut Command) -> serde_json::Value {
+    let out = cmd.output().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|e| panic!("{e}: {:?}", String::from_utf8_lossy(&out.stdout)))
+}
+
 #[test]
 fn wt_new_json() {
     let repo = TestRepo::new();
+    let json = stdout_json(
+        repo.cmd()
+            .args(["wt", "new", "-b", "test/branch", "--json"]),
+    );
+    assert_eq!(json["ok"], true);
+}
 
-    // git worktree add writes "Preparing worktree..." to inherited stdout,
-    // so we check for the JSON fragment rather than parsing the whole buffer.
+#[test]
+fn json_stdout_is_only_json() {
+    let repo = TestRepo::new();
+    stdout_json(repo.cmd().args(["--json", "wt", "new", "-b", "feat"]));
+    stdout_json(repo.cmd().args(["--json", "wt", "archive", "feat"]));
+    stdout_json(repo.cmd().args(["--json", "wt", "unarchive", "feat"]));
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut init = Command::cargo_bin("flowy").unwrap();
+    init.current_dir(tmp.path())
+        .args(["--json", "init", "fresh"])
+        .envs(common::GIT_ENV);
+    stdout_json(&mut init);
+}
+
+#[test]
+fn wt_archive_json_refuses_a_dirty_worktree_without_prompting() {
+    let repo = TestRepo::new();
     repo.cmd()
-        .args(["wt", "new", "-b", "test/branch", "--json"])
+        .args(["wt", "new", "-b", "feat"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("\"ok\": true"));
+        .success();
+    fs::write(repo.root.join("worktrees/feat/wip.txt"), "wip\n").unwrap();
+
+    repo.cmd()
+        .args(["--json", "wt", "archive", "feat"])
+        .assert()
+        .failure()
+        .stdout("")
+        .stderr(predicate::str::contains("--force"));
+    assert!(repo.root.join("worktrees/feat").exists());
 }
 
 #[test]
