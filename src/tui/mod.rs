@@ -48,6 +48,8 @@ pub struct App {
     pub view: View,
     pub input_mode: InputMode,
     pub active_workstream: String,
+    // Where `tickets` was loaded from, so they can be re-read after an edit.
+    pub active_ws_dir: PathBuf,
     pub tickets: Vec<TuiTicket>,
     // None = not yet fetched; Some = loaded (may be empty)
     pub worktrees: Option<Vec<WorktreeInfo>>,
@@ -71,10 +73,35 @@ impl App {
         self.worktrees.as_deref().unwrap_or(&[])
     }
 
-    fn ensure_worktrees_loaded(&mut self) {
-        if self.worktrees.is_none() {
-            self.worktrees = Some(list_worktrees(&self.root).unwrap_or_default());
+    // Fetched on every visit to the view, so counts track edits made since.
+    fn refresh_worktrees(&mut self) {
+        let worktrees = list_worktrees(&self.root).unwrap_or_default();
+        self.worktree_selected = self
+            .worktree_selected
+            .min(worktrees.len().saturating_sub(1));
+        self.worktrees = Some(worktrees);
+    }
+
+    fn clamp_ticket_selection(&mut self) {
+        let len = self.filtered_tickets().len();
+        self.ticket_selected = self.ticket_selected.min(len.saturating_sub(1));
+    }
+
+    // Re-reads the active workstream's tickets, keeping the selection on the same
+    // ticket while it is still listed.
+    fn reload_tickets(&mut self) {
+        let selected = self
+            .filtered_tickets()
+            .get(self.ticket_selected)
+            .map(|&i| self.tickets[i].number);
+        self.tickets = load_tui_tickets(&self.active_ws_dir);
+        let filtered = self.filtered_tickets();
+        if let Some(pos) =
+            selected.and_then(|n| filtered.iter().position(|&i| self.tickets[i].number == n))
+        {
+            self.ticket_selected = pos;
         }
+        self.clamp_ticket_selection();
     }
 
     pub fn filtered_tickets(&self) -> Vec<usize> {
@@ -105,6 +132,7 @@ impl App {
 
     fn load_tickets_for_workstream(&mut self, name: &str, ws_dir: &Path) {
         self.active_workstream = name.to_string();
+        self.active_ws_dir = ws_dir.to_path_buf();
         self.tickets = load_tui_tickets(ws_dir);
         self.ticket_selected = 0;
         self.query.clear();
@@ -137,8 +165,9 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return None;
         }
+        // In search, `q` is a character of the query.
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL)
-            || key.code == KeyCode::Char('q')
+            || key.code == KeyCode::Char('q') && self.input_mode == InputMode::Normal
         {
             self.should_quit = true;
             return None;
@@ -155,7 +184,7 @@ impl App {
             InputMode::Normal => match key.code {
                 KeyCode::Tab => {
                     self.view = View::Worktrees;
-                    self.ensure_worktrees_loaded();
+                    self.refresh_worktrees();
                     self.update_worktree_preview();
                 }
                 KeyCode::Down | KeyCode::Char('j')
@@ -208,6 +237,8 @@ impl App {
                         let new_status = next_status(&self.tickets[idx].status);
                         if write_ticket_status(&self.tickets[idx], &new_status).is_ok() {
                             self.tickets[idx].status = new_status;
+                            // The pending filter may have just dropped this row.
+                            self.clamp_ticket_selection();
                         }
                     }
                 }
@@ -375,8 +406,13 @@ pub fn run(root: &Path) -> Result<()> {
         None => (View::Worktrees, String::new()),
     };
 
+    let active_ws_dir = if initial_view == View::Tickets {
+        workstream_dir(root, &active_workstream)
+    } else {
+        PathBuf::new()
+    };
     let tickets = if initial_view == View::Tickets {
-        load_tui_tickets(&workstream_dir(root, &active_workstream))
+        load_tui_tickets(&active_ws_dir)
     } else {
         Vec::new()
     };
@@ -386,6 +422,7 @@ pub fn run(root: &Path) -> Result<()> {
         view: initial_view,
         input_mode: InputMode::Normal,
         active_workstream,
+        active_ws_dir,
         tickets,
         worktrees: None,
         worktree_preview: Vec::new(),
@@ -400,16 +437,12 @@ pub fn run(root: &Path) -> Result<()> {
     };
 
     if initial_view == View::Worktrees {
-        app.ensure_worktrees_loaded();
+        app.refresh_worktrees();
         app.update_worktree_preview();
     }
 
-    enable_raw_mode()?;
-    let mut stdout = std::io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
+    // Installed before raw mode is entered, so there is no window in which a
+    // panic leaves the terminal raw.
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
@@ -417,12 +450,18 @@ pub fn run(root: &Path) -> Result<()> {
         original_hook(info);
     }));
 
-    let result = run_loop(&mut terminal, &mut app);
+    enable_raw_mode()?;
+    let result = (|| -> Result<()> {
+        let mut stdout = std::io::stdout();
+        execute!(stdout, EnterAlternateScreen)?;
+        let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
+        run_loop(&mut terminal, &mut app)
+    })();
 
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-
-    result
+    // Restored whether or not setup or the loop failed.
+    let restored = disable_raw_mode().and(execute!(std::io::stdout(), LeaveAlternateScreen));
+    result?;
+    Ok(restored?)
 }
 
 fn run_loop(
@@ -442,6 +481,8 @@ fn run_loop(
             enable_raw_mode()?;
             execute!(terminal.backend_mut(), EnterAlternateScreen)?;
             terminal.clear()?;
+            // The editor may have changed status or priority behind the list.
+            app.reload_tickets();
         }
 
         if app.should_quit {
@@ -513,6 +554,7 @@ mod tests {
             view: View::Tickets,
             input_mode: InputMode::Normal,
             active_workstream: "test".to_string(),
+            active_ws_dir: PathBuf::new(),
             tickets: (1..=count)
                 .map(|n| TuiTicket {
                     number: n,
@@ -639,6 +681,70 @@ mod tests {
         assert!(app.pending_only);
         assert_eq!(app.filtered_tickets(), vec![0]);
         assert_eq!(app.ticket_selected, 0);
+    }
+
+    fn key(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    fn app_on_disk(count: u32) -> (tempfile::TempDir, App) {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("tickets")).unwrap();
+        for n in 1..=count {
+            std::fs::write(
+                ticket_path(dir.path(), n),
+                format!("+++\nstatus = \"pending\"\ntitle = \"ticket {n}\"\n+++\n"),
+            )
+            .unwrap();
+        }
+        let mut app = app_with_tickets(0);
+        app.active_ws_dir = dir.path().to_path_buf();
+        app.reload_tickets();
+        (dir, app)
+    }
+
+    #[test]
+    fn q_in_search_is_part_of_the_query() {
+        let mut app = app_with_tickets(1);
+        app.handle_key(key('i'));
+        app.handle_key(key('q'));
+        assert!(!app.should_quit);
+        assert_eq!(app.query, "q");
+
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.handle_key(key('q'));
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn s_on_the_last_pending_row_keeps_a_selection() {
+        let (_dir, mut app) = app_on_disk(2);
+        app.ticket_selected = 1;
+
+        app.handle_key(key('s'));
+        assert_eq!(app.filtered_tickets().len(), 1);
+        assert_eq!(app.ticket_selected, 0);
+
+        // The next `s` lands on the remaining row instead of doing nothing.
+        app.handle_key(key('s'));
+        let first = std::fs::read_to_string(ticket_path(&app.active_ws_dir, 1)).unwrap();
+        assert!(first.contains("status = \"complete\""), "{first}");
+    }
+
+    #[test]
+    fn reload_picks_up_an_edit_and_keeps_the_selection() {
+        let (_dir, mut app) = app_on_disk(3);
+        app.ticket_selected = 2;
+        std::fs::write(
+            ticket_path(&app.active_ws_dir, 1),
+            "+++\nstatus = \"complete\"\ntitle = \"ticket 1\"\n+++\n",
+        )
+        .unwrap();
+
+        app.reload_tickets();
+        let filtered = app.filtered_tickets();
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(app.tickets[filtered[app.ticket_selected]].number, 3);
     }
 
     #[test]
