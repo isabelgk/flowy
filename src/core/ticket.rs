@@ -371,7 +371,7 @@ pub fn rewrite_priority(content: &str, priority: Priority) -> Result<String> {
     let mut fm: Vec<String> = fm
         .lines()
         .map(|l| {
-            if l.trim_start().starts_with("priority") && l.contains('=') {
+            if is_key(l, "priority") {
                 replaced = true;
                 line.clone()
             } else {
@@ -714,6 +714,13 @@ mod tests {
             out,
             "+++\nstatus = \"pending\"\npriority = \"high\"\ntitle = \"T\"\n+++\n\nBody.\n"
         );
+    }
+
+    #[test]
+    fn rewrite_priority_leaves_other_priority_prefixed_keys() {
+        let input = "+++\npriority_note = \"x\"\n+++\n";
+        let out = rewrite_priority(input, Priority::Low).unwrap();
+        assert_eq!(out, "+++\npriority_note = \"x\"\npriority = \"low\"\n+++\n");
     }
 
     #[test]
