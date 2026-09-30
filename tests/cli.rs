@@ -1589,7 +1589,23 @@ fn wt_rename_json() {
 // submodules, so rename must fall back to a manual move + admin repair.
 #[test]
 fn wt_rename_moves_worktree_with_submodule() {
+    rename_worktree_with_submodule(false);
+}
+
+// git 2.48+ can write the worktree's gitdir pointers relative to each other.
+#[test]
+fn wt_rename_moves_worktree_with_submodule_and_relative_paths() {
+    rename_worktree_with_submodule(true);
+}
+
+fn rename_worktree_with_submodule(relative_paths: bool) {
     let repo = TestRepo::new();
+    if relative_paths {
+        git_in(
+            &repo.root.join(".bare"),
+            &["config", "worktree.useRelativePaths", "true"],
+        );
+    }
 
     repo.cmd()
         .args(["wt", "new", "-b", "feat/sub"])

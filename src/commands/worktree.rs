@@ -961,7 +961,7 @@ fn move_worktree(root: &Path, old: &Path, new: &Path) -> Result<()> {
     // only the admin pointer and each submodule's core.worktree go stale.
     std::fs::rename(old, new)
         .with_context(|| format!("moving {} to {}", old.display(), new.display()))?;
-    repair_worktree_gitdir(new)?;
+    repair_worktree_gitdir(root, new)?;
     for (path, git_dir) in submodules {
         let status = git()
             .args(["config", "--file"])
@@ -1029,18 +1029,24 @@ fn admin_dir(worktree: &Path) -> Result<PathBuf> {
     content
         .lines()
         .find_map(|l| l.strip_prefix("gitdir: "))
-        .map(|p| PathBuf::from(p.trim()))
+        // Relative under worktree.useRelativePaths; join keeps an absolute one as is.
+        .map(|p| worktree.join(p.trim()))
         .with_context(|| format!("no gitdir pointer in {}", git_file.display()))
 }
 
-fn repair_worktree_gitdir(new_worktree: &Path) -> Result<()> {
-    // The worktree's own .git file points (absolutely) at its admin dir under
-    // .bare/worktrees/<id>, unaffected by the move. Only the reverse pointer
-    // (admin/gitdir -> worktree/.git) still names the pre-move path.
-    let pointer = admin_dir(new_worktree)?.join("gitdir");
-    let git_file = new_worktree.join(".git");
-    std::fs::write(&pointer, format!("{}\n", git_file.display()))
-        .with_context(|| format!("writing {}", pointer.display()))
+// After a manual move the admin dir's gitdir still names the old path. git
+// rewrites it in whichever form worktree.useRelativePaths asks for.
+fn repair_worktree_gitdir(root: &Path, new_worktree: &Path) -> Result<()> {
+    let status = git()
+        .args(["worktree", "repair"])
+        .arg(new_worktree)
+        .current_dir(root.join(".bare"))
+        .status()
+        .context("running git worktree repair")?;
+    if !status.success() {
+        bail!("git worktree repair failed for {}", new_worktree.display());
+    }
+    Ok(())
 }
 
 fn report_partial(moved_branch: bool, old_branch: &str, new_branch: &str, moved_worktree: bool) {
