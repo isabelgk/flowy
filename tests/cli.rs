@@ -2229,22 +2229,21 @@ fn notes_write_rejects_paths_outside_the_workstream() {
     let repo = TestRepo::new();
     new_workstream(&repo, "test/branch");
 
-    for name in ["../escaped.md", "/tmp/flowy-escaped.md"] {
+    let outside = tempfile::TempDir::new().unwrap();
+    let absolute = outside.path().join("escaped.md");
+    let relative = repo.ws_dir("test-branch").join("..").join("escaped.md");
+    for (name, target) in [
+        ("../escaped.md", &relative),
+        (absolute.to_str().unwrap(), &absolute),
+    ] {
         repo.cmd()
             .args(["notes", "write", "-w", "test-branch", name])
             .write_stdin("nope\n")
             .assert()
             .failure()
             .stderr(predicate::str::contains("inside the workstream"));
+        assert!(!target.exists(), "{name} was written");
     }
-
-    assert!(
-        !repo
-            .ws_dir("test-branch")
-            .join("..")
-            .join("escaped.md")
-            .exists()
-    );
 }
 
 #[test]
