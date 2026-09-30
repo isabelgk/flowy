@@ -560,6 +560,21 @@ fn interactive_search(tickets: &[SearchTicket]) -> Result<Option<(String, u32, S
     }
 }
 
+fn print_search_json(results: &[(&SearchTicket, u32)]) -> Result<()> {
+    let val: Vec<serde_json::Value> = results
+        .iter()
+        .map(|(t, score)| {
+            serde_json::json!({
+                "workstream": t.workstream,
+                "number": t.number,
+                "title": t.title,
+                "score": score,
+            })
+        })
+        .collect();
+    print_json(&val)
+}
+
 fn search(matches: &ArgMatches) -> Result<()> {
     use std::io::IsTerminal;
 
@@ -574,18 +589,7 @@ fn search(matches: &ArgMatches) -> Result<()> {
         let q = query.ok_or_else(|| anyhow::anyhow!("query required in pipe mode"))?;
         let results = score_tickets(&tickets, q);
         if json {
-            let val: Vec<serde_json::Value> = results
-                .iter()
-                .map(|(t, score)| {
-                    serde_json::json!({
-                        "workstream": t.workstream,
-                        "number": t.number,
-                        "title": t.title,
-                        "score": score,
-                    })
-                })
-                .collect();
-            return print_json(&val);
+            return print_search_json(&results);
         }
         for (t, _) in &results {
             println!("{:03} {} ({})", t.number, t.title, t.workstream);
@@ -596,18 +600,7 @@ fn search(matches: &ArgMatches) -> Result<()> {
     if let Some(q) = query {
         let results = score_tickets(&tickets, q);
         if json {
-            let val: Vec<serde_json::Value> = results
-                .iter()
-                .map(|(t, score)| {
-                    serde_json::json!({
-                        "workstream": t.workstream,
-                        "number": t.number,
-                        "title": t.title,
-                        "score": score,
-                    })
-                })
-                .collect();
-            return print_json(&val);
+            return print_search_json(&results);
         }
         if results.is_empty() {
             println!("No matches.");
