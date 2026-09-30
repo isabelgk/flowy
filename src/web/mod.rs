@@ -4,7 +4,7 @@ mod render;
 use anyhow::{Context, Result};
 use maud::Markup;
 use std::io::Read as _;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tiny_http::{Header, Request, Response, Server};
@@ -404,7 +404,20 @@ fn parse_route(method: &str, path: &str) -> Route {
     }
 }
 
+// Route segments are percent-decoded, so a name can smuggle in `/`, `..`, or an
+// absolute path that `Path::join` would follow out of `worktrees/`.
+fn is_single_component(name: &str) -> bool {
+    let mut components = Path::new(name).components();
+    matches!(
+        (components.next(), components.next()),
+        (Some(Component::Normal(_)), None)
+    ) && !name.contains('/')
+}
+
 fn live_workstream(root: &Path, name: &str) -> Option<PathBuf> {
+    if !is_single_component(name) {
+        return None;
+    }
     worktrees_dir(root)
         .join(name)
         .is_dir()
@@ -643,6 +656,14 @@ mod tests {
         }
         assert!(!hosts.contains(&"localhost".to_string()));
         assert!(allowed_hosts("::1", 80).contains(&"[::1]".to_string()));
+    }
+
+    #[test]
+    fn workstream_names_cannot_leave_worktrees() {
+        for name in ["/tmp/x", "../../x", "..", ".", "a/b", "a/", ""] {
+            assert!(!is_single_component(name), "{name}");
+        }
+        assert!(is_single_component("feat-x"));
     }
 
     #[test]

@@ -226,6 +226,26 @@ fn a_foreign_host_is_refused_even_with_a_matching_origin() {
 }
 
 #[test]
+fn a_workstream_name_cannot_escape_the_worktrees_dir() {
+    let repo = repo_with_worktree();
+    let outside = tempfile::tempdir().expect("tempdir");
+    let server = Server::start(&repo);
+
+    let absolute = form_urlencoded::byte_serialize(outside.path().to_str().unwrap().as_bytes())
+        .collect::<String>()
+        .replace('+', "%20");
+    let target = outside.path().join(".local/workstream/tickets/001.md");
+    for name in [absolute.as_str(), "..%2Fworktrees%2Ffeat-web"] {
+        let body = form(&[("title", "Escaped")]);
+        let (status, _) = server.post(&format!("/w/{name}/tickets"), &body);
+        assert_eq!(status, 404, "{name}");
+        assert_eq!(server.get(&format!("/w/{name}")).0, 404, "{name}");
+    }
+    assert!(!target.exists());
+    assert!(!repo.ticket("feat-web", 1).exists());
+}
+
+#[test]
 fn the_editor_saves_a_body_and_refuses_a_stale_one() {
     let repo = repo_with_worktree();
     repo.cmd()
