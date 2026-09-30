@@ -14,6 +14,7 @@ impl Server {
     fn start(repo: &TestRepo) -> Server {
         let bin = assert_cmd::cargo::cargo_bin("flowy");
         let mut child = Command::new(bin)
+            .envs(common::GIT_ENV)
             .arg("--repo-root")
             .arg(&repo.root)
             .args(["web", "--port", "0"])

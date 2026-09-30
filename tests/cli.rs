@@ -1028,8 +1028,7 @@ fn branch_fallback_reports_a_failing_git() {
     let dir = tempfile::TempDir::new().unwrap();
     let root = dir.path().join("not-a-repo");
     fs::create_dir_all(root.join("worktrees")).unwrap();
-    Command::cargo_bin("flowy")
-        .unwrap()
+    common::flowy()
         .arg("--repo-root")
         .arg(&root)
         .env("GIT_CEILING_DIRECTORIES", dir.path())
@@ -1068,10 +1067,9 @@ fn json_stdout_is_only_json() {
     stdout_json(repo.cmd().args(["--json", "wt", "unarchive", "feat"]));
 
     let tmp = tempfile::TempDir::new().unwrap();
-    let mut init = Command::cargo_bin("flowy").unwrap();
+    let mut init = common::flowy();
     init.current_dir(tmp.path())
-        .args(["--json", "init", "fresh"])
-        .envs(common::GIT_ENV);
+        .args(["--json", "init", "fresh"]);
     stdout_json(&mut init);
 }
 
@@ -1136,8 +1134,7 @@ fn init_creates_project_structure() {
     let tmp = tempfile::tempdir().unwrap();
     let project = tmp.path().join("myproject");
 
-    assert_cmd::Command::cargo_bin("flowy")
-        .unwrap()
+    common::flowy()
         .args(["init", project.to_str().unwrap()])
         .assert()
         .success()
@@ -1172,8 +1169,7 @@ fn init_json_output() {
     let tmp = tempfile::tempdir().unwrap();
     let project = tmp.path().join("myproject");
 
-    assert_cmd::Command::cargo_bin("flowy")
-        .unwrap()
+    common::flowy()
         .args(["init", project.to_str().unwrap(), "--json"])
         .assert()
         .success()
@@ -1184,8 +1180,7 @@ fn init_json_output() {
 fn init_with_relative_path_creates_worktree() {
     let tmp = tempfile::tempdir().unwrap();
 
-    assert_cmd::Command::cargo_bin("flowy")
-        .unwrap()
+    common::flowy()
         .current_dir(tmp.path())
         .args(["init", "myproject"])
         .assert()
@@ -1207,8 +1202,7 @@ fn init_fails_if_directory_exists() {
     let project = tmp.path().join("existing");
     fs::create_dir_all(&project).unwrap();
 
-    assert_cmd::Command::cargo_bin("flowy")
-        .unwrap()
+    common::flowy()
         .args(["init", project.to_str().unwrap()])
         .assert()
         .failure()
@@ -1298,15 +1292,7 @@ fn wt_unarchive_rolls_back_notes_on_git_failure() {
         .success();
 
     // Delete the branch from the bare repo so git worktree add will fail.
-    std::process::Command::new("git")
-        .args(["branch", "-D", "feat"])
-        .current_dir(repo.root.join(".bare"))
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .status()
-        .expect("git branch -D");
+    git_in(&repo.root.join(".bare"), &["branch", "-D", "feat"]);
 
     repo.cmd()
         .args(["wt", "unarchive", "feat"])
@@ -1333,29 +1319,12 @@ fn clone_scaffolds_default_branch_workstream() {
     let tmp = tempfile::tempdir().unwrap();
     let src = tmp.path().join("src");
 
-    let git_env = [
-        ("GIT_AUTHOR_NAME", "Test"),
-        ("GIT_AUTHOR_EMAIL", "test@example.com"),
-        ("GIT_COMMITTER_NAME", "Test"),
-        ("GIT_COMMITTER_EMAIL", "test@example.com"),
-    ];
-    std::process::Command::new("git")
-        .args(["init", "-b", "main", src.to_str().unwrap()])
-        .envs(git_env.iter().cloned())
-        .status()
-        .expect("git init");
-    std::process::Command::new("git")
-        .args(["commit", "--allow-empty", "-m", "init"])
-        .current_dir(&src)
-        .envs(git_env.iter().cloned())
-        .status()
-        .expect("git commit");
+    git_in(tmp.path(), &["init", "-b", "main", src.to_str().unwrap()]);
+    git_in(&src, &["commit", "--allow-empty", "-m", "init"]);
 
-    assert_cmd::Command::cargo_bin("flowy")
-        .unwrap()
+    common::flowy()
         .current_dir(tmp.path())
         .args(["clone", src.to_str().unwrap(), "project"])
-        .envs(git_env.iter().cloned())
         .assert()
         .success();
 
@@ -1381,8 +1350,7 @@ fn clone_tracks_origin_branches() {
     git_in(tmp.path(), &["init", "-b", "main", src.to_str().unwrap()]);
     git_in(&src, &["commit", "--allow-empty", "-m", "init"]);
 
-    Command::cargo_bin("flowy")
-        .unwrap()
+    common::flowy()
         .current_dir(tmp.path())
         .args(["clone", src.to_str().unwrap(), "project"])
         .assert()
@@ -1399,8 +1367,7 @@ fn clone_tracks_origin_branches() {
     git_in(&src, &["checkout", "-q", "-b", "later"]);
     git_in(&src, &["commit", "--allow-empty", "-m", "later work"]);
     git_in(&project, &["fetch", "--quiet", "origin"]);
-    Command::cargo_bin("flowy")
-        .unwrap()
+    common::flowy()
         .arg("--repo-root")
         .arg(&project)
         .args(["wt", "new", "-b", "later"])
@@ -1423,29 +1390,12 @@ fn clone_scaffolds_non_main_default_branch() {
     let tmp = tempfile::tempdir().unwrap();
     let src = tmp.path().join("src");
 
-    let git_env = [
-        ("GIT_AUTHOR_NAME", "Test"),
-        ("GIT_AUTHOR_EMAIL", "test@example.com"),
-        ("GIT_COMMITTER_NAME", "Test"),
-        ("GIT_COMMITTER_EMAIL", "test@example.com"),
-    ];
-    std::process::Command::new("git")
-        .args(["init", "-b", "trunk", src.to_str().unwrap()])
-        .envs(git_env.iter().cloned())
-        .status()
-        .expect("git init");
-    std::process::Command::new("git")
-        .args(["commit", "--allow-empty", "-m", "init"])
-        .current_dir(&src)
-        .envs(git_env.iter().cloned())
-        .status()
-        .expect("git commit");
+    git_in(tmp.path(), &["init", "-b", "trunk", src.to_str().unwrap()]);
+    git_in(&src, &["commit", "--allow-empty", "-m", "init"]);
 
-    assert_cmd::Command::cargo_bin("flowy")
-        .unwrap()
+    common::flowy()
         .current_dir(tmp.path())
         .args(["clone", src.to_str().unwrap(), "project"])
-        .envs(git_env.iter().cloned())
         .assert()
         .success();
 
@@ -1984,6 +1934,7 @@ fn t_add_concurrent_adds_get_distinct_numbers() {
     let children: Vec<_> = (0..N)
         .map(|i| {
             std::process::Command::new(env!("CARGO_BIN_EXE_flowy"))
+                .envs(common::GIT_ENV)
                 .arg("--repo-root")
                 .arg(&repo.root)
                 .args(["t", "add", "-w", "test-branch", &format!("Ticket {i}")])
@@ -2716,8 +2667,7 @@ fn wt_new_refuses_start_point_for_existing_branch() {
 fn clone_refuses_an_existing_target() {
     let tmp = tempfile::tempdir().unwrap();
     fs::create_dir(tmp.path().join("project")).unwrap();
-    assert_cmd::Command::cargo_bin("flowy")
-        .unwrap()
+    common::flowy()
         .current_dir(tmp.path())
         .args(["clone", "https://example.invalid/repo.git", "project"])
         .assert()
