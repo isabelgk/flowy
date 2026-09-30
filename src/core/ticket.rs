@@ -88,13 +88,8 @@ pub fn parse_ticket(path: &Path) -> Result<Ticket> {
     let raw =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
 
-    let (fm_str, body) = split_frontmatter(&raw).ok_or_else(|| {
-        if raw.starts_with("+++") {
-            anyhow::anyhow!("ticket '{filename}' has malformed frontmatter (no closing +++)")
-        } else {
-            anyhow::anyhow!("ticket '{filename}' has no frontmatter")
-        }
-    })?;
+    let (fm_str, body) =
+        frontmatter_or_err(&raw).map_err(|e| anyhow::anyhow!("'{filename}': {e}"))?;
     let fm: Frontmatter =
         toml::from_str(fm_str).with_context(|| format!("parsing frontmatter of '{filename}'"))?;
     let status = match fm.status.as_deref().unwrap_or("pending") {
@@ -365,25 +360,30 @@ fn frontmatter_or_err(content: &str) -> Result<(&str, &str)> {
 // body byte for byte.
 pub fn rewrite_priority(content: &str, priority: Priority) -> Result<String> {
     let (fm, body) = frontmatter_or_err(content)?;
-    let line = format!("priority = \"{}\"", priority.as_str());
+    let fm = set_key(fm, "priority", priority.as_str());
+    Ok(format!("+++\n{fm}\n+++\n{body}"))
+}
 
+// Replaces the line assigning `key`, or appends one, leaving every other line as
+// it was.
+fn set_key(fm: &str, key: &str, value: &str) -> String {
+    let line = format!("{key} = \"{value}\"");
     let mut replaced = false;
-    let mut fm: Vec<String> = fm
+    let mut lines: Vec<&str> = fm
         .lines()
         .map(|l| {
-            if is_key(l, "priority") {
+            if is_key(l, key) {
                 replaced = true;
-                line.clone()
+                line.as_str()
             } else {
-                l.to_string()
+                l
             }
         })
         .collect();
     if !replaced {
-        fm.push(line);
+        lines.push(&line);
     }
-
-    Ok(format!("+++\n{}\n+++\n{body}", fm.join("\n")))
+    lines.join("\n")
 }
 
 // Whether a frontmatter line assigns `key`, however it is spaced or indented.
@@ -409,26 +409,10 @@ pub fn rewrite_status_and_append(
 
     let result = match split_frontmatter(content) {
         Some((fm, after)) => {
-            let line = format!("status = \"{new_status}\"");
-            let mut replaced = false;
-            let mut fm: Vec<String> = fm
-                .lines()
-                .map(|l| {
-                    if is_key(l, "status") {
-                        replaced = true;
-                        line.clone()
-                    } else {
-                        l.to_string()
-                    }
-                })
-                .collect();
             // parse_ticket reads a missing status as pending, so a ticket without
             // one still needs the key written for the change to take effect.
-            if !replaced {
-                fm.push(line);
-            }
-            let new_fm = fm.join("\n");
-            format!("+++\n{new_fm}\n+++\n{after}")
+            let fm = set_key(fm, "status", new_status);
+            format!("+++\n{fm}\n+++\n{after}")
         }
         None => format!("+++\nstatus = \"{new_status}\"\n+++\n{content}"),
     };
