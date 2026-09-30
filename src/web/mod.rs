@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use tiny_http::{Header, Request, Response, Server};
 
 use actions::{BodySave, Form, body_hash};
-use render::{Filters, Nav};
+use render::{Filters, Nav, ws_url};
 
 use crate::commands::worktree::{WorktreeInfo, list_worktrees};
 use crate::core::{
@@ -333,37 +333,38 @@ fn route_reply(app: &App, method: &str, url: &str, body: &str, request: &Request
                 return Ok(no_workstream(app, &name));
             };
             let number = actions::add_ticket(&ws_dir, &Form::parse(body))?;
-            Ok(Reply::redirect(format!("/w/{name}/t/{number}")))
+            Ok(Reply::redirect(format!("{}/t/{number}", ws_url(&name))))
         }
         Route::SetStatus(name, number) => {
             let Some(ws_dir) = writable_workstream(&app.root, &name)? else {
                 return Ok(no_workstream(app, &name));
             };
             actions::set_status(&ws_dir, number, &Form::parse(body))?;
-            Ok(Reply::redirect(format!("/w/{name}/t/{number}")))
+            Ok(Reply::redirect(format!("{}/t/{number}", ws_url(&name))))
         }
         Route::SetPriority(name, number) => {
             let Some(ws_dir) = writable_workstream(&app.root, &name)? else {
                 return Ok(no_workstream(app, &name));
             };
             actions::set_priority(&ws_dir, number, &Form::parse(body))?;
-            Ok(Reply::redirect(format!("/w/{name}/t/{number}")))
+            Ok(Reply::redirect(format!("{}/t/{number}", ws_url(&name))))
         }
         Route::AddJournal(name, number) => {
             let Some(ws_dir) = writable_workstream(&app.root, &name)? else {
                 return Ok(no_workstream(app, &name));
             };
             actions::add_journal(&ws_dir, number, &Form::parse(body))?;
-            Ok(Reply::redirect(format!("/w/{name}/t/{number}")))
+            Ok(Reply::redirect(format!("{}/t/{number}", ws_url(&name))))
         }
         Route::SetBody(name, number) => {
             let Some(ws_dir) = writable_workstream(&app.root, &name)? else {
                 return Ok(no_workstream(app, &name));
             };
             match actions::set_body(&ws_dir, number, &Form::parse(body))? {
-                BodySave::Saved => Ok(Reply::redirect(format!("/w/{name}/t/{number}"))),
+                BodySave::Saved => Ok(Reply::redirect(format!("{}/t/{number}", ws_url(&name)))),
                 BodySave::Conflict => Ok(Reply::redirect(format!(
-                    "/w/{name}/t/{number}/edit?conflict=1"
+                    "{}/t/{number}/edit?conflict=1",
+                    ws_url(&name)
                 ))),
             }
         }
@@ -505,11 +506,11 @@ fn no_ticket(app: &App, name: &str, number: u32) -> Reply {
 
 fn index(app: &App) -> Result<Reply> {
     if let Some(name) = cwd_worktree(&app.root) {
-        return Ok(Reply::redirect(format!("/w/{name}")));
+        return Ok(Reply::redirect(ws_url(&name)));
     }
     let nav = app.nav(None);
     match nav.workstreams.first() {
-        Some(ws) => Ok(Reply::redirect(format!("/w/{}", ws.name))),
+        Some(ws) => Ok(Reply::redirect(ws_url(&ws.name))),
         None => Ok(Reply::html(render::message(
             &nav,
             "No worktrees",

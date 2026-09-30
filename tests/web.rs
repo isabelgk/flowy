@@ -279,6 +279,37 @@ fn an_oversized_or_cut_off_body_is_refused() {
 }
 
 #[test]
+fn names_outside_ascii_and_with_url_syntax_are_encoded() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "caf\u{e9}"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["wt", "new", "-b", "fix#1"])
+        .assert()
+        .success();
+    let server = Server::start(&repo);
+
+    let (status, index) = server.get("/");
+    assert_eq!(status, 303, "{index}");
+    assert!(index.contains("Location: /w/caf%C3%A9"), "{index}");
+
+    let (status, response) = server.post("/w/caf%C3%A9/tickets", &form(&[("title", "Accented")]));
+    assert_eq!(status, 303, "{response}");
+    assert!(
+        response.contains("Location: /w/caf%C3%A9/t/1"),
+        "{response}"
+    );
+
+    let (status, page) = server.get("/w/caf%C3%A9");
+    assert_eq!(status, 200);
+    assert!(page.contains("href=\"/w/caf%C3%A9/t/1\""), "{page}");
+    assert!(page.contains("href=\"/w/fix%231\""), "{page}");
+    assert_eq!(server.get("/w/fix%231").0, 200);
+}
+
+#[test]
 fn the_editor_saves_a_body_and_refuses_a_stale_one() {
     let repo = repo_with_worktree();
     repo.cmd()
