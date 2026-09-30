@@ -138,7 +138,8 @@ fn ticket_cmd() -> Command {
                         .long("status")
                         .value_name("STATUS")
                         .default_value("pending")
-                        .help("Filter by status: pending, complete, wont-implement, all"),
+                        .value_parser(["pending", "complete", "wont-implement", "all"])
+                        .help("Filter by status"),
                 )
                 .arg(
                     Arg::new("priority")
@@ -200,7 +201,12 @@ fn ticket_cmd() -> Command {
                         .long("wont-implement")
                         .action(ArgAction::SetTrue),
                 )
-                .arg(Arg::new("reopen").long("reopen").action(ArgAction::SetTrue)),
+                .arg(
+                    Arg::new("reopen")
+                        .long("reopen")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with("wont-implement"),
+                ),
         )
         .subcommand(
             Command::new("priority")

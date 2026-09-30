@@ -2688,3 +2688,18 @@ fn t_edit_runs_editor_with_arguments() {
         .join("001.md");
     assert!(fs::read_to_string(ticket).unwrap().contains("Your ticket"));
 }
+
+#[test]
+fn ticket_flags_reject_bad_combinations() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["t", "ls", "--status", "bogus"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid value 'bogus'"));
+    repo.cmd()
+        .args(["t", "done", "1", "--reopen", "--wont-implement"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
