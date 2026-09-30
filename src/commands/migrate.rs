@@ -2,9 +2,10 @@ use anyhow::{Context, Result};
 use clap::ArgMatches;
 use std::path::{Path, PathBuf};
 
+use super::get_repo_root;
 use crate::core::{
     names::workstream_dir,
-    repo::{ensure_local_excluded, find_repo_root, worktrees_dir},
+    repo::{ensure_local_excluded, worktrees_dir},
 };
 use crate::output::print_json;
 
@@ -26,14 +27,6 @@ impl Outcome {
             Outcome::Orphaned => "orphaned",
             Outcome::Conflict => "conflict",
         }
-    }
-}
-
-fn get_repo_root(matches: &ArgMatches) -> Result<PathBuf> {
-    if let Some(path) = matches.get_one::<String>("repo-root") {
-        Ok(PathBuf::from(path))
-    } else {
-        find_repo_root()
     }
 }
 

@@ -6,11 +6,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
 
+use super::get_repo_root;
 use crate::core::{
     cache::{Cache, WorktreeCache, load_cache, save_cache},
     meta::{Meta, WorktreeMeta, read_meta, write_meta},
     names::safe_name,
-    repo::{archive_root, ensure_local_excluded, find_repo_root, worktrees_dir},
+    repo::{archive_root, ensure_local_excluded, worktrees_dir},
     ticket::{Status, load_tickets_lenient},
 };
 use crate::output::print_json;
@@ -23,14 +24,6 @@ pub fn dispatch(matches: &ArgMatches) -> Result<()> {
         Some(("unarchive", sub)) => unarchive(sub),
         Some(("rename", sub)) => rename(sub),
         _ => Ok(()),
-    }
-}
-
-fn get_repo_root(matches: &ArgMatches) -> Result<PathBuf> {
-    if let Some(path) = matches.get_one::<String>("repo-root") {
-        Ok(PathBuf::from(path))
-    } else {
-        find_repo_root()
     }
 }
 

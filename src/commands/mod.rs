@@ -33,11 +33,7 @@ pub fn dispatch(matches: ArgMatches) -> Result<()> {
             )
         }
         Some(("tui", _)) | None => {
-            let root = if let Some(p) = matches.get_one::<String>("repo-root") {
-                PathBuf::from(p)
-            } else {
-                find_repo_root()?
-            };
+            let root = get_repo_root(&matches)?;
             crate::tui::run(&root)
         }
         Some(("completions", sub)) => {
