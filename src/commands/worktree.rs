@@ -459,23 +459,23 @@ fn compute_worktree_entry(
     };
     let age_seconds = (chrono::Utc::now().timestamp() - commit_ts).max(0);
 
-    // Use cached ticket counts if the tickets directory mtime is unchanged.
-    let mtime = tickets_dir_mtime(&ws_dir);
-    let (tickets_pending, tickets_total) = if mtime != 0 && mtime == entry.tickets_dir_mtime {
-        (entry.tickets_pending, entry.tickets_total)
-    } else {
-        // A ticket that does not parse is left out of the counts.
-        let (tickets, _) = load_tickets_lenient(&ws_dir);
-        let pending = tickets
-            .iter()
-            .filter(|t| t.status == Status::Pending)
-            .count();
-        let total = tickets.len();
-        entry.tickets_dir_mtime = mtime;
-        entry.tickets_pending = pending;
-        entry.tickets_total = total;
-        (pending, total)
-    };
+    let fingerprint = tickets_fingerprint(&ws_dir);
+    let (tickets_pending, tickets_total) =
+        if fingerprint != 0 && fingerprint == entry.tickets_fingerprint {
+            (entry.tickets_pending, entry.tickets_total)
+        } else {
+            // A ticket that does not parse is left out of the counts.
+            let (tickets, _) = load_tickets_lenient(&ws_dir);
+            let pending = tickets
+                .iter()
+                .filter(|t| t.status == Status::Pending)
+                .count();
+            let total = tickets.len();
+            entry.tickets_fingerprint = fingerprint;
+            entry.tickets_pending = pending;
+            entry.tickets_total = total;
+            (pending, total)
+        };
 
     let info = WorktreeInfo {
         name: name.clone(),
@@ -489,28 +489,40 @@ fn compute_worktree_entry(
     (name, info, entry)
 }
 
-fn tickets_dir_mtime(ws_dir: &Path) -> u64 {
-    // Max mtime across ticket files — directory mtime only changes on add/remove,
-    // not on content edits (e.g. status changes written in-place). Nanoseconds,
-    // because a status change landing in the same second as the previous count
-    // would otherwise read as no change at all and keep the stale count forever.
+// Changes whenever a ticket is added, removed, renamed, or rewritten: every
+// entry's name, size, and mtime go into it, with the directory's own mtime. File
+// mtimes alone miss a deleted ticket, or one copied in with an old mtime. Hashed
+// with DefaultHasher, which can change between builds; a mismatch only costs a
+// recount. 0 means there is no tickets directory.
+fn tickets_fingerprint(ws_dir: &Path) -> u64 {
+    use std::hash::{Hash, Hasher};
+
     let dir = ws_dir.join("tickets");
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return 0;
     };
-    entries
+    let nanos = |m: &std::fs::Metadata| {
+        m.modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_nanos())
+    };
+    let mut files: Vec<_> = entries
         .flatten()
         .filter_map(|e| {
-            e.metadata()
-                .ok()?
-                .modified()
-                .ok()?
-                .duration_since(std::time::UNIX_EPOCH)
-                .ok()
-                .map(|d| d.as_nanos() as u64)
+            let m = e.metadata().ok()?;
+            Some((e.file_name(), m.len(), nanos(&m)))
         })
-        .max()
+        .collect();
+    files.sort();
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::fs::metadata(&dir)
+        .map(|m| nanos(&m))
         .unwrap_or(0)
+        .hash(&mut hasher);
+    files.hash(&mut hasher);
+    hasher.finish().max(1)
 }
 
 fn is_dirty(path: &Path) -> Result<bool> {

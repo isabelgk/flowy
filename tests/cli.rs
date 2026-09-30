@@ -354,6 +354,41 @@ fn a_broken_ticket_does_not_hide_the_rest() {
 }
 
 #[test]
+fn wt_ls_counts_follow_deleted_and_back_dated_tickets() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat"])
+        .assert()
+        .success();
+    for title in ["One", "Two"] {
+        repo.cmd()
+            .args(["t", "add", "-w", "feat", title])
+            .assert()
+            .success();
+    }
+    let total = || {
+        let out = repo.cmd().args(["--json", "wt", "ls"]).output().unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        json[0]["tickets_total"].as_u64().unwrap()
+    };
+    assert_eq!(total(), 2);
+
+    // 001 is not the newest ticket, so the newest mtime does not move.
+    fs::remove_file(repo.ticket("feat", 1)).unwrap();
+    assert_eq!(total(), 1);
+
+    let copied = repo.ticket("feat", 7);
+    fs::write(&copied, "+++\ntitle = \"Copied\"\n+++\n").unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&copied)
+        .unwrap()
+        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000))
+        .unwrap();
+    assert_eq!(total(), 2);
+}
+
+#[test]
 fn t_done_unknown_id_errors() {
     let repo = TestRepo::new();
     repo.cmd()

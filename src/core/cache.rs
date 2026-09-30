@@ -9,7 +9,7 @@ use crate::core::atomic::write_atomic;
 pub struct WorktreeCache {
     pub head_sha: String,
     pub commit_ts: i64,
-    pub tickets_dir_mtime: u64,
+    pub tickets_fingerprint: u64,
     pub tickets_pending: usize,
     pub tickets_total: usize,
 }
