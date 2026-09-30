@@ -62,10 +62,10 @@ Manage bare git worktrees.
 
 | Subcommand | Alias | Description |
 |------------|-------|-------------|
-| `new` | `n` | Add a new worktree and its workstream directory |
+| `new` | | Add a new worktree and its workstream directory |
 | `ls` | | List worktrees with status, ticket counts, and branch age |
-| `archive` | `ar` | Archive a workstream and remove its worktree |
-| `unarchive` | `un` | Restore an archived workstream |
+| `archive` | | Archive a workstream and remove its worktree |
+| `unarchive` | | Restore an archived workstream |
 | `rename` | `mv` | Rename a workstream: branch, worktree dir, and meta |
 
 `rename <old-name> <new-branch>` renames the git branch, moves the worktree to
@@ -74,21 +74,21 @@ because they live inside it. Worktrees containing submodules (which `git
 worktree move` refuses) are moved manually and their admin pointers repaired.
 An archived workstream must be unarchived before it can be renamed.
 
-### `flowy ticket` (alias: `t`)
+### `flowy ticket`
 
 Manage markdown tickets. Workstream defaults to the current git branch.
 
 | Subcommand | Alias | Description |
 |------------|-------|-------------|
 | `list` | `ls` | List tickets |
-| `show` | `s` | Display a ticket |
-| `add` | `a` | Create a new ticket |
-| `done` | `d` | Mark a ticket as done |
-| `priority` | `p` | Set a ticket's priority |
-| `journal` | `j` | Append a journal entry to a ticket |
-| `edit` | `e` | Open a ticket in `$EDITOR` |
-| `search` | `/` | Search tickets with fuzzy matching |
-| `status` | `st` | Show workstream overview |
+| `show` | | Display a ticket |
+| `add` | | Create a new ticket |
+| `done` | | Mark a ticket as done |
+| `priority` | | Set a ticket's priority |
+| `journal` | | Append a journal entry to a ticket |
+| `edit` | | Open a ticket in `$EDITOR` |
+| `search` | | Search tickets with fuzzy matching |
+| `status` | | Show workstream overview |
 
 Use `-w / --workstream <NAME>` to target a workstream other than the current branch.
 
@@ -97,9 +97,9 @@ rank. `add` takes `-p / --priority <high|medium|low>`, `priority <ID> <LEVEL>`
 changes it afterward, and `list -p <LEVEL>` narrows the listing to one rank.
 
 ```sh
-flowy t add -p high "Crash on empty config"
-flowy t priority 3 low
-flowy t list -p high
+flowy ticket add -p high "Crash on empty config"
+flowy ticket priority 3 low
+flowy ticket list -p high
 ```
 
 `add`, `done`, and `journal` all take prose. Passing it inline (`-d`,
@@ -109,7 +109,7 @@ first. `--body-file <PATH>` reads it out of band instead, and `--body-file -`
 reads stdin:
 
 ```sh
-flowy t add "Parser rejects empty input" --body-file - <<'EOF'
+flowy ticket add "Parser rejects empty input" --body-file - <<'EOF'
 ## Scope
 `parse_header` in src/parse.rs.
 
@@ -120,7 +120,7 @@ EOF
 
 `--body-file` is mutually exclusive with the inline form on each subcommand.
 
-### `flowy notes` (alias: `n`)
+### `flowy notes`
 
 Read and write the non-ticket files in a workstream: `planning.md`, `next.md`,
 `status.md`, `meta.toml`, and anything under `milestones/`. Workstream defaults

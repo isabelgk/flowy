@@ -143,7 +143,7 @@ fn serves_the_ticket_list_and_detail() {
     let repo = repo_with_worktree();
     repo.cmd()
         .args([
-            "t",
+            "ticket",
             "add",
             "-w",
             "feat-web",
@@ -358,7 +358,7 @@ fn a_slow_upload_does_not_stall_other_requests() {
 fn the_editor_saves_a_body_and_refuses_a_stale_one() {
     let repo = repo_with_worktree();
     repo.cmd()
-        .args(["t", "add", "-w", "feat-web", "Editable"])
+        .args(["ticket", "add", "-w", "feat-web", "Editable"])
         .assert()
         .success();
     let server = Server::start(&repo);
@@ -401,7 +401,7 @@ fn the_editor_saves_a_body_and_refuses_a_stale_one() {
 fn status_priority_and_journal_match_the_cli_format() {
     let repo = repo_with_worktree();
     repo.cmd()
-        .args(["t", "add", "-w", "feat-web", "Workable"])
+        .args(["ticket", "add", "-w", "feat-web", "Workable"])
         .assert()
         .success();
     let server = Server::start(&repo);
@@ -440,7 +440,7 @@ fn status_priority_and_journal_match_the_cli_format() {
 
     // The CLI has to keep reading what the web UI wrote.
     repo.cmd()
-        .args(["t", "show", "1", "-w", "feat-web"])
+        .args(["ticket", "show", "1", "-w", "feat-web"])
         .assert()
         .success();
 }

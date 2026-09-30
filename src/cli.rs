@@ -52,7 +52,6 @@ fn worktree_cmd() -> Command {
         .arg_required_else_help(true)
         .subcommand(
             Command::new("new")
-                .visible_alias("n")
                 .about("Add a new worktree and notes directory")
                 .arg(
                     Arg::new("branch")
@@ -67,7 +66,6 @@ fn worktree_cmd() -> Command {
         )
         .subcommand(
             Command::new("archive")
-                .visible_alias("ar")
                 .about("Archive a workstream and remove its worktree")
                 .arg(
                     Arg::new("name")
@@ -85,7 +83,6 @@ fn worktree_cmd() -> Command {
         )
         .subcommand(
             Command::new("unarchive")
-                .visible_alias("un")
                 .about("Restore an archived workstream")
                 .arg(
                     Arg::new("name")
@@ -116,7 +113,6 @@ fn worktree_cmd() -> Command {
 
 fn ticket_cmd() -> Command {
     Command::new("ticket")
-        .visible_alias("t")
         .about("Manage markdown tickets")
         .arg_required_else_help(true)
         .arg(
@@ -151,13 +147,11 @@ fn ticket_cmd() -> Command {
         )
         .subcommand(
             Command::new("show")
-                .visible_alias("s")
                 .about("Display a ticket")
                 .arg(Arg::new("id").required(true).index(1)),
         )
         .subcommand(
             Command::new("add")
-                .visible_alias("a")
                 .about("Create a new ticket")
                 .arg(Arg::new("title").required(true).index(1))
                 .arg(
@@ -184,7 +178,6 @@ fn ticket_cmd() -> Command {
         )
         .subcommand(
             Command::new("done")
-                .visible_alias("d")
                 .about("Mark a ticket as done")
                 .arg(Arg::new("id").required(true).index(1))
                 .arg(Arg::new("summary").long("summary").value_name("TEXT"))
@@ -209,7 +202,6 @@ fn ticket_cmd() -> Command {
         )
         .subcommand(
             Command::new("priority")
-                .visible_alias("p")
                 .about("Set a ticket's priority")
                 .arg(Arg::new("id").required(true).index(1))
                 .arg(
@@ -221,7 +213,6 @@ fn ticket_cmd() -> Command {
         )
         .subcommand(
             Command::new("journal")
-                .visible_alias("j")
                 .about("Append a journal entry to a ticket")
                 .arg(Arg::new("id").required(true).index(1))
                 .arg(
@@ -240,26 +231,19 @@ fn ticket_cmd() -> Command {
         )
         .subcommand(
             Command::new("edit")
-                .visible_alias("e")
                 .about("Open a ticket in $EDITOR")
                 .arg(Arg::new("id").required(true).index(1)),
         )
         .subcommand(
             Command::new("search")
-                .visible_alias("/")
                 .about("Search tickets with fuzzy matching")
                 .arg(Arg::new("query").index(1)),
         )
-        .subcommand(
-            Command::new("status")
-                .visible_alias("st")
-                .about("Show workstream overview"),
-        )
+        .subcommand(Command::new("status").about("Show workstream overview"))
 }
 
 fn notes_cmd() -> Command {
     Command::new("notes")
-        .visible_alias("n")
         .about("Read and write a workstream's notes")
         .arg_required_else_help(true)
         .arg(
@@ -289,7 +273,6 @@ fn notes_cmd() -> Command {
         )
         .subcommand(
             Command::new("show")
-                .visible_alias("cat")
                 .about("Print a note")
                 .arg(Arg::new("name").required(true).index(1)),
         )

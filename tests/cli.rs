@@ -49,7 +49,7 @@ fn t_add_creates_ticket_with_h1() {
         .success();
 
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "My ticket"])
+        .args(["ticket", "add", "-w", "test-branch", "My ticket"])
         .assert()
         .success();
 
@@ -70,12 +70,20 @@ fn t_done_rewrites_heading_and_appends_summary() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "My ticket"])
+        .args(["ticket", "add", "-w", "test-branch", "My ticket"])
         .assert()
         .success();
 
     repo.cmd()
-        .args(["t", "done", "-w", "test-branch", "1", "--summary", "Done"])
+        .args([
+            "ticket",
+            "done",
+            "-w",
+            "test-branch",
+            "1",
+            "--summary",
+            "Done",
+        ])
         .assert()
         .success();
 
@@ -102,18 +110,18 @@ fn t_list_json_correct_fields() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "My ticket"])
+        .args(["ticket", "add", "-w", "test-branch", "My ticket"])
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "done", "-w", "test-branch", "1"])
+        .args(["ticket", "done", "-w", "test-branch", "1"])
         .assert()
         .success();
 
     let output = repo
         .cmd()
         .args([
-            "t",
+            "ticket",
             "list",
             "-w",
             "test-branch",
@@ -141,11 +149,11 @@ fn wt_ls_json_correct_ticket_counts() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "My ticket"])
+        .args(["ticket", "add", "-w", "test-branch", "My ticket"])
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "done", "-w", "test-branch", "1"])
+        .args(["ticket", "done", "-w", "test-branch", "1"])
         .assert()
         .success();
 
@@ -265,7 +273,7 @@ fn wt_archive_restores_notes_when_removal_fails() {
     let worktree = repo.root.join("worktrees").join("feat-locked");
     git_in(&worktree, &["worktree", "lock", worktree.to_str().unwrap()]);
     repo.cmd()
-        .args(["t", "add", "-w", "feat-locked", "Survives"])
+        .args(["ticket", "add", "-w", "feat-locked", "Survives"])
         .assert()
         .success();
 
@@ -278,7 +286,7 @@ fn wt_archive_restores_notes_when_removal_fails() {
     assert!(worktree.exists());
     assert!(!archived_ws_dir_in(&repo.root, "feat-locked").exists());
     repo.cmd()
-        .args(["t", "list", "-w", "feat-locked"])
+        .args(["ticket", "list", "-w", "feat-locked"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Survives"));
@@ -333,7 +341,7 @@ fn a_broken_ticket_does_not_hide_the_rest() {
     fs::write(tickets.join("README.md"), "# Not a ticket\n").unwrap();
 
     repo.cmd()
-        .args(["t", "list"])
+        .args(["ticket", "list"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Readable"))
@@ -342,13 +350,13 @@ fn a_broken_ticket_does_not_hide_the_rest() {
         .stderr(predicate::str::contains("README").not());
 
     repo.cmd()
-        .args(["t", "status", "-w", "feat"])
+        .args(["ticket", "status", "-w", "feat"])
         .assert()
         .success()
         .stdout(predicate::str::contains("2 pending / 2 total"));
 
     repo.cmd()
-        .args(["t", "list", "-w", "feat"])
+        .args(["ticket", "list", "-w", "feat"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("002.md"));
@@ -363,7 +371,7 @@ fn wt_ls_counts_follow_deleted_and_back_dated_tickets() {
         .success();
     for title in ["One", "Two"] {
         repo.cmd()
-            .args(["t", "add", "-w", "feat", title])
+            .args(["ticket", "add", "-w", "feat", title])
             .assert()
             .success();
     }
@@ -397,7 +405,7 @@ fn w_names_an_archived_workstream() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "feat", "Kept"])
+        .args(["ticket", "add", "-w", "feat", "Kept"])
         .assert()
         .success();
     repo.cmd()
@@ -416,7 +424,7 @@ fn w_names_an_archived_workstream() {
         .success()
         .stdout("the plan\n");
     repo.cmd()
-        .args(["t", "list", "-w", "feat"])
+        .args(["ticket", "list", "-w", "feat"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Kept"));
@@ -467,7 +475,7 @@ fn tickets_are_addressed_by_their_actual_file() {
     .unwrap();
 
     repo.cmd()
-        .args(["t", "done", "-w", "feat", "7"])
+        .args(["ticket", "done", "-w", "feat", "7"])
         .assert()
         .success();
     assert!(
@@ -491,7 +499,7 @@ fn tickets_are_addressed_by_their_actual_file() {
     fs::set_permissions(&editor, perms).unwrap();
     repo.cmd()
         .env("EDITOR", &editor)
-        .args(["t", "edit", "-w", "feat", "7"])
+        .args(["ticket", "edit", "-w", "feat", "7"])
         .assert()
         .success();
     assert_eq!(
@@ -502,7 +510,7 @@ fn tickets_are_addressed_by_their_actual_file() {
 
     fs::write(tickets.join("007.md"), "+++\ntitle = \"Twin\"\n+++\n").unwrap();
     repo.cmd()
-        .args(["t", "show", "-w", "feat", "7"])
+        .args(["ticket", "show", "-w", "feat", "7"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("ambiguous"));
@@ -517,7 +525,7 @@ fn t_done_unknown_id_errors() {
         .success();
 
     repo.cmd()
-        .args(["t", "done", "-w", "test-branch", "99"])
+        .args(["ticket", "done", "-w", "test-branch", "99"])
         .assert()
         .failure();
 }
@@ -550,17 +558,17 @@ fn t_show_displays_ticket_content() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "My ticket"])
+        .args(["ticket", "add", "-w", "test-branch", "My ticket"])
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "done", "-w", "test-branch", "1"])
+        .args(["ticket", "done", "-w", "test-branch", "1"])
         .assert()
         .success();
 
     let output = repo
         .cmd()
-        .args(["t", "show", "-w", "test-branch", "1"])
+        .args(["ticket", "show", "-w", "test-branch", "1"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -576,13 +584,13 @@ fn t_show_json() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "My ticket"])
+        .args(["ticket", "add", "-w", "test-branch", "My ticket"])
         .assert()
         .success();
 
     let output = repo
         .cmd()
-        .args(["t", "show", "-w", "test-branch", "1", "--json"])
+        .args(["ticket", "show", "-w", "test-branch", "1", "--json"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -601,7 +609,7 @@ fn t_show_unknown_id_errors() {
         .success();
 
     repo.cmd()
-        .args(["t", "show", "-w", "test-branch", "99"])
+        .args(["ticket", "show", "-w", "test-branch", "99"])
         .assert()
         .failure();
 }
@@ -614,12 +622,19 @@ fn t_done_wont_implement() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "My ticket"])
+        .args(["ticket", "add", "-w", "test-branch", "My ticket"])
         .assert()
         .success();
 
     repo.cmd()
-        .args(["t", "done", "-w", "test-branch", "1", "--wont-implement"])
+        .args([
+            "ticket",
+            "done",
+            "-w",
+            "test-branch",
+            "1",
+            "--wont-implement",
+        ])
         .assert()
         .success();
 
@@ -637,16 +652,16 @@ fn t_done_reopen_complete_ticket() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "My ticket"])
+        .args(["ticket", "add", "-w", "test-branch", "My ticket"])
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "done", "-w", "test-branch", "1"])
+        .args(["ticket", "done", "-w", "test-branch", "1"])
         .assert()
         .success();
 
     repo.cmd()
-        .args(["t", "done", "-w", "test-branch", "1", "--reopen"])
+        .args(["ticket", "done", "-w", "test-branch", "1", "--reopen"])
         .assert()
         .success();
 
@@ -664,13 +679,13 @@ fn t_done_json() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "My ticket"])
+        .args(["ticket", "add", "-w", "test-branch", "My ticket"])
         .assert()
         .success();
 
     let output = repo
         .cmd()
-        .args(["t", "done", "-w", "test-branch", "1", "--json"])
+        .args(["ticket", "done", "-w", "test-branch", "1", "--json"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -689,7 +704,7 @@ fn t_add_with_description() {
 
     repo.cmd()
         .args([
-            "t",
+            "ticket",
             "add",
             "-w",
             "test-branch",
@@ -717,7 +732,7 @@ fn t_add_json() {
 
     let output = repo
         .cmd()
-        .args(["t", "add", "-w", "test-branch", "My ticket", "--json"])
+        .args(["ticket", "add", "-w", "test-branch", "My ticket", "--json"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -734,11 +749,11 @@ fn t_add_increments_ticket_number() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "First"])
+        .args(["ticket", "add", "-w", "test-branch", "First"])
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "Second"])
+        .args(["ticket", "add", "-w", "test-branch", "Second"])
         .assert()
         .success();
 
@@ -754,12 +769,19 @@ fn t_journal_appends_entry() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "My ticket"])
+        .args(["ticket", "add", "-w", "test-branch", "My ticket"])
         .assert()
         .success();
 
     repo.cmd()
-        .args(["t", "journal", "-w", "test-branch", "1", "Started work"])
+        .args([
+            "ticket",
+            "journal",
+            "-w",
+            "test-branch",
+            "1",
+            "Started work",
+        ])
         .assert()
         .success();
 
@@ -777,13 +799,13 @@ fn t_journal_with_heading() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "My ticket"])
+        .args(["ticket", "add", "-w", "test-branch", "My ticket"])
         .assert()
         .success();
 
     repo.cmd()
         .args([
-            "t",
+            "ticket",
             "journal",
             "-w",
             "test-branch",
@@ -809,17 +831,17 @@ fn t_search_returns_matching_tickets() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "Fix auth bug"])
+        .args(["ticket", "add", "-w", "test-branch", "Fix auth bug"])
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "Improve dashboard"])
+        .args(["ticket", "add", "-w", "test-branch", "Improve dashboard"])
         .assert()
         .success();
 
     let output = repo
         .cmd()
-        .args(["t", "search", "-w", "test-branch", "auth"])
+        .args(["ticket", "search", "-w", "test-branch", "auth"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -835,17 +857,17 @@ fn t_search_json() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "Fix auth bug"])
+        .args(["ticket", "add", "-w", "test-branch", "Fix auth bug"])
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "Improve dashboard"])
+        .args(["ticket", "add", "-w", "test-branch", "Improve dashboard"])
         .assert()
         .success();
 
     let output = repo
         .cmd()
-        .args(["t", "search", "-w", "test-branch", "auth", "--json"])
+        .args(["ticket", "search", "-w", "test-branch", "auth", "--json"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -862,13 +884,13 @@ fn t_search_no_results() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "Fix auth bug"])
+        .args(["ticket", "add", "-w", "test-branch", "Fix auth bug"])
         .assert()
         .success();
 
     // In non-TTY (captured) mode, no results means empty stdout.
     repo.cmd()
-        .args(["t", "search", "-w", "test-branch", "zzznomatch"])
+        .args(["ticket", "search", "-w", "test-branch", "zzznomatch"])
         .assert()
         .success()
         .stdout("");
@@ -882,21 +904,21 @@ fn t_status_shows_counts() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "First"])
+        .args(["ticket", "add", "-w", "test-branch", "First"])
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "done", "-w", "test-branch", "1"])
+        .args(["ticket", "done", "-w", "test-branch", "1"])
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "Second"])
+        .args(["ticket", "add", "-w", "test-branch", "Second"])
         .assert()
         .success();
 
     let output = repo
         .cmd()
-        .args(["t", "status", "-w", "test-branch"])
+        .args(["ticket", "status", "-w", "test-branch"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -914,21 +936,21 @@ fn t_status_json() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "First"])
+        .args(["ticket", "add", "-w", "test-branch", "First"])
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "done", "-w", "test-branch", "1"])
+        .args(["ticket", "done", "-w", "test-branch", "1"])
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "Second"])
+        .args(["ticket", "add", "-w", "test-branch", "Second"])
         .assert()
         .success();
 
     let output = repo
         .cmd()
-        .args(["t", "status", "-w", "test-branch", "--json"])
+        .args(["ticket", "status", "-w", "test-branch", "--json"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -949,7 +971,7 @@ fn t_infers_workstream_from_worktree_cwd() {
 
     // No -w flag; the worktree directory cwd sits in names the workstream.
     repo.cmd()
-        .args(["t", "add", "My ticket"])
+        .args(["ticket", "add", "My ticket"])
         .current_dir(repo.root.join("worktrees").join("test-branch"))
         .assert()
         .success();
@@ -971,7 +993,7 @@ fn t_w_flag_overrides_inferred_branch() {
 
     // Run from other-branch worktree but write to a different workstream via -w.
     repo.cmd()
-        .args(["t", "add", "-w", "target-branch", "My ticket"])
+        .args(["ticket", "add", "-w", "target-branch", "My ticket"])
         .current_dir(repo.root.join("worktrees").join("other-branch"))
         .assert()
         .success();
@@ -997,7 +1019,7 @@ fn t_no_branch_errors_with_helpful_message() {
     // ceiling keeps that true when TMPDIR itself sits inside a repo.
     let outside = tempfile::TempDir::new().unwrap();
     repo.cmd()
-        .args(["t", "add", "My ticket"])
+        .args(["ticket", "add", "My ticket"])
         .current_dir(outside.path())
         .env("GIT_CEILING_DIRECTORIES", outside.path())
         .assert()
@@ -1216,13 +1238,13 @@ fn t_add_title_with_special_chars_round_trips() {
     // Tab is the character the old manual escaping silently corrupted.
     let title = "first\tsecond";
     repo.cmd()
-        .args(["t", "add", "-w", "feat", title])
+        .args(["ticket", "add", "-w", "feat", title])
         .assert()
         .success();
 
     let output = repo
         .cmd()
-        .args(["--json", "t", "show", "-w", "feat", "1"])
+        .args(["--json", "ticket", "show", "-w", "feat", "1"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1243,20 +1265,20 @@ fn t_done_summary_not_duplicated_on_second_call() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "feat", "A ticket"])
+        .args(["ticket", "add", "-w", "feat", "A ticket"])
         .assert()
         .success();
 
     repo.cmd()
-        .args(["t", "done", "-w", "feat", "1", "--summary", "First"])
+        .args(["ticket", "done", "-w", "feat", "1", "--summary", "First"])
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "done", "-w", "feat", "1", "--reopen"])
+        .args(["ticket", "done", "-w", "feat", "1", "--reopen"])
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "done", "-w", "feat", "1", "--summary", "Second"])
+        .args(["ticket", "done", "-w", "feat", "1", "--summary", "Second"])
         .assert()
         .success();
 
@@ -1416,7 +1438,7 @@ fn wt_rename_moves_branch_dir_and_notes() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "Carry me", "-w", "feat-old"])
+        .args(["ticket", "add", "Carry me", "-w", "feat-old"])
         .assert()
         .success();
 
@@ -1683,7 +1705,7 @@ fn migrate_moves_notes_into_worktree() {
     // The migrated workstream is now visible to the normal commands.
     let output = repo
         .cmd()
-        .args(["t", "list", "-w", "legacy", "--json"])
+        .args(["ticket", "list", "-w", "legacy", "--json"])
         .output()
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -1724,7 +1746,7 @@ fn migrate_reports_a_workstream_started_before_migrating() {
     let repo = TestRepo::new();
     let old = seed_old_layout(&repo.root, "legacy", true);
     repo.cmd()
-        .args(["t", "add", "-w", "legacy", "Filed too early"])
+        .args(["ticket", "add", "-w", "legacy", "Filed too early"])
         .assert()
         .success();
 
@@ -1821,7 +1843,7 @@ fn repo_with_renamed_branch() -> TestRepo {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "feat-foo", "First"])
+        .args(["ticket", "add", "-w", "feat-foo", "First"])
         .assert()
         .success();
     git_in(
@@ -1837,7 +1859,7 @@ fn t_list_follows_the_worktree_dir_when_the_branch_is_renamed() {
 
     let output = repo
         .cmd()
-        .args(["t", "list", "--json"])
+        .args(["ticket", "list", "--json"])
         .current_dir(repo.root.join("worktrees").join("feat-foo"))
         .output()
         .unwrap();
@@ -1855,7 +1877,7 @@ fn t_status_counts_tickets_when_the_branch_is_renamed() {
 
     let output = repo
         .cmd()
-        .args(["t", "status", "--json"])
+        .args(["ticket", "status", "--json"])
         .current_dir(repo.root.join("worktrees").join("feat-foo"))
         .output()
         .unwrap();
@@ -1872,7 +1894,7 @@ fn t_add_writes_into_the_worktree_when_the_branch_is_renamed() {
     let repo = repo_with_renamed_branch();
 
     repo.cmd()
-        .args(["t", "add", "Second"])
+        .args(["ticket", "add", "Second"])
         .current_dir(repo.root.join("worktrees").join("feat-foo"))
         .assert()
         .success();
@@ -1931,7 +1953,7 @@ fn t_add_concurrent_adds_get_distinct_numbers() {
                 .envs(common::GIT_ENV)
                 .arg("--repo-root")
                 .arg(&repo.root)
-                .args(["t", "add", "-w", "test-branch", &format!("Ticket {i}")])
+                .args(["ticket", "add", "-w", "test-branch", &format!("Ticket {i}")])
                 .stdout(std::process::Stdio::null())
                 .spawn()
                 .expect("spawn flowy")
@@ -1980,7 +2002,14 @@ fn t_add_body_file_reads_a_file() {
     fs::write(&body, prose).unwrap();
 
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "My ticket", "--body-file"])
+        .args([
+            "ticket",
+            "add",
+            "-w",
+            "test-branch",
+            "My ticket",
+            "--body-file",
+        ])
         .arg(&body)
         .assert()
         .success();
@@ -1996,7 +2025,7 @@ fn t_add_body_file_dash_reads_stdin() {
 
     repo.cmd()
         .args([
-            "t",
+            "ticket",
             "add",
             "-w",
             "test-branch",
@@ -2019,7 +2048,7 @@ fn t_add_rejects_description_and_body_file_together() {
 
     repo.cmd()
         .args([
-            "t",
+            "ticket",
             "add",
             "-w",
             "test-branch",
@@ -2040,7 +2069,7 @@ fn t_add_missing_body_file_fails_without_creating_a_ticket() {
 
     repo.cmd()
         .args([
-            "t",
+            "ticket",
             "add",
             "-w",
             "test-branch",
@@ -2059,13 +2088,13 @@ fn t_journal_body_file_reads_stdin() {
     let repo = TestRepo::new();
     new_workstream(&repo, "test/branch");
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "My ticket"])
+        .args(["ticket", "add", "-w", "test-branch", "My ticket"])
         .assert()
         .success();
 
     repo.cmd()
         .args([
-            "t",
+            "ticket",
             "journal",
             "-w",
             "test-branch",
@@ -2089,12 +2118,12 @@ fn t_journal_requires_text_or_body_file() {
     let repo = TestRepo::new();
     new_workstream(&repo, "test/branch");
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "My ticket"])
+        .args(["ticket", "add", "-w", "test-branch", "My ticket"])
         .assert()
         .success();
 
     repo.cmd()
-        .args(["t", "journal", "-w", "test-branch", "1"])
+        .args(["ticket", "journal", "-w", "test-branch", "1"])
         .assert()
         .failure();
 }
@@ -2104,12 +2133,20 @@ fn t_done_summary_from_body_file() {
     let repo = TestRepo::new();
     new_workstream(&repo, "test/branch");
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "My ticket"])
+        .args(["ticket", "add", "-w", "test-branch", "My ticket"])
         .assert()
         .success();
 
     repo.cmd()
-        .args(["t", "done", "-w", "test-branch", "1", "--body-file", "-"])
+        .args([
+            "ticket",
+            "done",
+            "-w",
+            "test-branch",
+            "1",
+            "--body-file",
+            "-",
+        ])
         .write_stdin("Landed in `parser.rs`.\n\nThe \"fast path\" was the fix.\n")
         .assert()
         .success();
@@ -2300,11 +2337,11 @@ fn notes_milestone_freezes_the_plan_and_keeps_tickets() {
     fs::write(ws.join("planning.md"), "the plan\n").unwrap();
     fs::write(ws.join("next.md"), "the board\n").unwrap();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "Done work"])
+        .args(["ticket", "add", "-w", "test-branch", "Done work"])
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "done", "-w", "test-branch", "1"])
+        .args(["ticket", "done", "-w", "test-branch", "1"])
         .assert()
         .success();
 
@@ -2374,7 +2411,7 @@ fn notes_milestone_reports_pending_tickets() {
 
     fs::write(ws.join("planning.md"), "the plan\n").unwrap();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "Still open"])
+        .args(["ticket", "add", "-w", "test-branch", "Still open"])
         .assert()
         .success();
 
@@ -2416,7 +2453,7 @@ fn t_add_writes_priority_frontmatter() {
         .success();
 
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "-p", "high", "Urgent"])
+        .args(["ticket", "add", "-w", "test-branch", "-p", "high", "Urgent"])
         .assert()
         .success();
 
@@ -2433,7 +2470,7 @@ fn t_add_without_priority_omits_the_field() {
         .success();
 
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "Plain"])
+        .args(["ticket", "add", "-w", "test-branch", "Plain"])
         .assert()
         .success();
 
@@ -2449,12 +2486,12 @@ fn t_priority_sets_the_level_on_an_existing_ticket() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "Later"])
+        .args(["ticket", "add", "-w", "test-branch", "Later"])
         .assert()
         .success();
 
     repo.cmd()
-        .args(["t", "priority", "-w", "test-branch", "1", "low"])
+        .args(["ticket", "priority", "-w", "test-branch", "1", "low"])
         .assert()
         .success();
 
@@ -2462,7 +2499,7 @@ fn t_priority_sets_the_level_on_an_existing_ticket() {
     assert!(content.contains("priority = \"low\""));
 
     repo.cmd()
-        .args(["t", "priority", "-w", "test-branch", "1", "high"])
+        .args(["ticket", "priority", "-w", "test-branch", "1", "high"])
         .assert()
         .success();
 
@@ -2479,12 +2516,12 @@ fn t_priority_rejects_an_unknown_level() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "T"])
+        .args(["ticket", "add", "-w", "test-branch", "T"])
         .assert()
         .success();
 
     repo.cmd()
-        .args(["t", "priority", "-w", "test-branch", "1", "urgent"])
+        .args(["ticket", "priority", "-w", "test-branch", "1", "urgent"])
         .assert()
         .failure();
 }
@@ -2502,14 +2539,14 @@ fn t_list_orders_by_priority_then_number() {
         ("Plain", "medium"),
     ] {
         repo.cmd()
-            .args(["t", "add", "-w", "test-branch", "-p", priority, title])
+            .args(["ticket", "add", "-w", "test-branch", "-p", priority, title])
             .assert()
             .success();
     }
 
     let output = repo
         .cmd()
-        .args(["t", "list", "-w", "test-branch", "--json"])
+        .args(["ticket", "list", "-w", "test-branch", "--json"])
         .output()
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -2527,17 +2564,25 @@ fn t_list_filters_by_priority() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "-p", "high", "Urgent"])
+        .args(["ticket", "add", "-w", "test-branch", "-p", "high", "Urgent"])
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "Ordinary"])
+        .args(["ticket", "add", "-w", "test-branch", "Ordinary"])
         .assert()
         .success();
 
     let output = repo
         .cmd()
-        .args(["t", "list", "-w", "test-branch", "--json", "-p", "high"])
+        .args([
+            "ticket",
+            "list",
+            "-w",
+            "test-branch",
+            "--json",
+            "-p",
+            "high",
+        ])
         .output()
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -2557,7 +2602,7 @@ fn t_priority_preserves_an_existing_ticket_body() {
         .success();
     repo.cmd()
         .args([
-            "t",
+            "ticket",
             "add",
             "-w",
             "test-branch",
@@ -2569,7 +2614,7 @@ fn t_priority_preserves_an_existing_ticket_body() {
         .success();
 
     repo.cmd()
-        .args(["t", "priority", "-w", "test-branch", "1", "high"])
+        .args(["ticket", "priority", "-w", "test-branch", "1", "high"])
         .assert()
         .success();
 
@@ -2584,7 +2629,7 @@ fn workstream_name_rejects_dot_components() {
     let repo = TestRepo::new();
     for bad in [".", ".."] {
         repo.cmd()
-            .args(["t", "ls", "-w", bad])
+            .args(["ticket", "ls", "-w", bad])
             .assert()
             .failure()
             .stderr(predicate::str::contains("not a valid workstream name"));
@@ -2614,12 +2659,12 @@ fn t_edit_runs_editor_with_arguments() {
         .assert()
         .success();
     repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "My ticket"])
+        .args(["ticket", "add", "-w", "test-branch", "My ticket"])
         .assert()
         .success();
 
     repo.cmd()
-        .args(["t", "edit", "-w", "test-branch", "1"])
+        .args(["ticket", "edit", "-w", "test-branch", "1"])
         .env("EDITOR", "perl -pi -e s/My/Your/")
         .assert()
         .success();
@@ -2634,12 +2679,12 @@ fn t_edit_runs_editor_with_arguments() {
 fn ticket_flags_reject_bad_combinations() {
     let repo = TestRepo::new();
     repo.cmd()
-        .args(["t", "ls", "--status", "bogus"])
+        .args(["ticket", "ls", "--status", "bogus"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("invalid value 'bogus'"));
     repo.cmd()
-        .args(["t", "done", "1", "--reopen", "--wont-implement"])
+        .args(["ticket", "done", "1", "--reopen", "--wont-implement"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("cannot be used with"));
