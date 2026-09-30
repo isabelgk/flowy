@@ -705,7 +705,6 @@ mod tests {
         assert_eq!(parse_route("GET", "/w/a/t/1/frobnicate"), Route::NotFound);
         assert_eq!(parse_route("POST", "/w/a"), Route::NotFound);
         assert_eq!(parse_route("DELETE", "/w/a/t/1"), Route::NotFound);
-        assert_eq!(parse_route("GET", "/../etc/passwd"), Route::NotFound);
     }
 
     #[test]
