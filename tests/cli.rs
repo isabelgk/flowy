@@ -389,6 +389,68 @@ fn wt_ls_counts_follow_deleted_and_back_dated_tickets() {
 }
 
 #[test]
+fn w_names_an_archived_workstream() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["t", "add", "-w", "feat", "Kept"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["notes", "write", "-w", "feat", "planning"])
+        .write_stdin("the plan\n")
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["wt", "archive", "feat"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .args(["notes", "show", "-w", "feat", "planning"])
+        .assert()
+        .success()
+        .stdout("the plan\n");
+    repo.cmd()
+        .args(["t", "list", "-w", "feat"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Kept"));
+    repo.cmd()
+        .args(["notes", "write", "-w", "feat", "next"])
+        .write_stdin("later\n")
+        .assert()
+        .success();
+    assert!(
+        archived_ws_dir_in(&repo.root, "feat")
+            .join("next.md")
+            .exists()
+    );
+
+    // No stray worktree dir, so unarchive still has somewhere to go.
+    assert!(!repo.root.join("worktrees").join("feat").exists());
+    repo.cmd()
+        .args(["wt", "unarchive", "feat"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn w_with_an_unknown_name_writes_nothing() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["notes", "write", "-w", "typo", "planning"])
+        .write_stdin("lost\n")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no workstream named 'typo'"));
+    assert!(!repo.root.join("worktrees").join("typo").exists());
+}
+
+#[test]
 fn t_done_unknown_id_errors() {
     let repo = TestRepo::new();
     repo.cmd()

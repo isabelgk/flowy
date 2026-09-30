@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::core::{
-    names::{safe_name, workstream_dir},
-    repo::{cwd_worktree, find_repo_root},
+    names::{archived_workstream_dir, safe_name, workstream_subdir},
+    repo::{cwd_worktree, find_repo_root, worktrees_dir},
 };
 
 pub fn dispatch(matches: ArgMatches) -> Result<()> {
@@ -65,7 +65,9 @@ pub fn get_repo_root(matches: &ArgMatches) -> Result<PathBuf> {
 // Resolve workstream name from -w flag, the worktree cwd sits in, or the current
 // git branch. The cwd takes precedence over the branch because a renamed branch
 // no longer names its own worktree directory, and the branch-derived path would
-// point at a directory that does not exist.
+// point at a directory that does not exist. The directory is the live worktree's
+// notes if there is one, else the archived notes; a name with neither is an
+// error, since writing there would create a stray `worktrees/<name>/`.
 pub fn resolve_workstream(matches: &ArgMatches, root: &Path) -> Result<(String, PathBuf)> {
     let name = if let Some(n) = matches.get_one::<String>("workstream") {
         safe_name(n)
@@ -82,8 +84,18 @@ pub fn resolve_workstream(matches: &ArgMatches, root: &Path) -> Result<(String, 
         }
         safe_name(&branch)
     };
-    let dir = workstream_dir(root, &name);
-    Ok((name, dir))
+    let worktree = worktrees_dir(root).join(&name);
+    if worktree.is_dir() {
+        return Ok((name, workstream_subdir(&worktree)));
+    }
+    let archived = archived_workstream_dir(root, &name);
+    if archived.is_dir() {
+        return Ok((name, archived));
+    }
+    bail!(
+        "no workstream named '{name}': no worktree at {} and none archived",
+        worktree.display()
+    )
 }
 
 // A broken ticket is reported rather than allowed to hide the rest of its
