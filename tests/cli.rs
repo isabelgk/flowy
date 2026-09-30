@@ -990,7 +990,7 @@ fn t_add_title_with_special_chars_round_trips() {
     );
 }
 
-// Bug fix: running `done --summary` twice must not append a second ## Summary.
+// Running `done --summary` twice keeps one ## Summary section and both texts.
 #[test]
 fn t_done_summary_not_duplicated_on_second_call() {
     let repo = TestRepo::new();
@@ -1023,6 +1023,8 @@ fn t_done_summary_not_duplicated_on_second_call() {
         1,
         "exactly one ## Summary section should exist"
     );
+    assert!(content.contains("First"), "{content}");
+    assert!(content.contains("Second"), "{content}");
 }
 
 // Bug fix: if `git worktree add` fails during unarchive the notes must be

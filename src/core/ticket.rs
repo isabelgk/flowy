@@ -284,7 +284,7 @@ fn is_key(line: &str, key: &str) -> bool {
 }
 
 // The `done` / `--reopen` / `--wont-implement` rewrite: replaces the status key
-// and appends a Summary section if the ticket does not already have one.
+// and adds the summary, if given, to the ticket's Summary section.
 pub fn rewrite_status_and_append(
     content: &str,
     reopen: bool,
@@ -329,19 +329,31 @@ pub fn rewrite_status_and_append(
         format!("+++\nstatus = \"{new_status}\"\n+++\n{content}")
     };
 
-    if let Some(s) = summary {
-        let already_has_summary =
-            result.contains("\n## Summary\n") || result.starts_with("## Summary\n");
-        if already_has_summary {
-            result
-        } else if result.ends_with('\n') {
-            format!("{result}\n## Summary\n\n{s}\n")
-        } else {
-            format!("{result}\n\n## Summary\n\n{s}\n")
-        }
-    } else {
-        result
+    match summary {
+        Some(s) => append_summary(&result, s),
+        None => result,
     }
+}
+
+// A ticket keeps one Summary section. When it already has one (a template
+// heading, or an earlier close before a reopen), the text goes at the end of it,
+// ahead of whatever `##` section follows.
+fn append_summary(content: &str, summary: &str) -> String {
+    const HEADING: &str = "\n## Summary\n";
+    let Some(start) = content.rfind(HEADING) else {
+        let sep = if content.ends_with('\n') { "" } else { "\n" };
+        return format!("{content}{sep}\n## Summary\n\n{summary}\n");
+    };
+    let section = start + HEADING.len();
+    let end = content[section..]
+        .find("\n## ")
+        .map_or(content.len(), |i| section + i + 1);
+    let (before, after) = content.split_at(end);
+    let gap = if after.is_empty() { "" } else { "\n" };
+    format!(
+        "{}\n\n{summary}\n{gap}{after}",
+        before.trim_end_matches('\n')
+    )
 }
 
 // Returns the rewritten ticket and the RFC 3339 timestamp stamped on the entry,
@@ -712,6 +724,24 @@ mod create_tests {
         let out = rewrite_status_and_append(input, false, false, Some("Done"));
         assert!(out.starts_with("+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n"));
         assert!(out.contains("\n## Summary\n\nDone\n"));
+    }
+
+    #[test]
+    fn rewrite_status_fills_an_existing_summary_section() {
+        let input =
+            "+++\nstatus = \"pending\"\ntitle = \"T\"\n+++\n\n## Summary\n\n## Journal\n\nEntry.\n";
+        let out = rewrite_status_and_append(input, false, false, Some("New"));
+        assert!(
+            out.ends_with("\n## Summary\n\nNew\n\n## Journal\n\nEntry.\n"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn rewrite_status_adds_to_a_summary_left_by_an_earlier_close() {
+        let input = "+++\nstatus = \"pending\"\ntitle = \"T\"\n+++\n\n## Summary\n\nOld.\n";
+        let out = rewrite_status_and_append(input, false, false, Some("New"));
+        assert!(out.ends_with("\n## Summary\n\nOld.\n\nNew\n"), "{out}");
     }
 
     #[test]
