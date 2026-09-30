@@ -2715,3 +2715,17 @@ fn wt_new_refuses_start_point_for_existing_branch() {
         .stderr(predicate::str::contains("already exists"));
     assert!(!repo.root.join("worktrees").join("existing").exists());
 }
+
+#[test]
+fn clone_refuses_an_existing_target() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir(tmp.path().join("project")).unwrap();
+    assert_cmd::Command::cargo_bin("flowy")
+        .unwrap()
+        .current_dir(tmp.path())
+        .args(["clone", "https://example.invalid/repo.git", "project"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("'project' already exists"));
+    assert!(!tmp.path().join("project").join(".bare").exists());
+}

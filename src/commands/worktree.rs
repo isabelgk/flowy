@@ -151,6 +151,9 @@ pub fn clone(matches: &ArgMatches) -> Result<()> {
         Some(n) => n.clone(),
         None => clone_dir_name(url)?,
     };
+    if Path::new(&name).exists() {
+        bail!("'{name}' already exists");
+    }
 
     let status = git()
         .args(["clone", "--bare", url])
