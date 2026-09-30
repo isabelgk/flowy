@@ -16,8 +16,7 @@ use crate::core::{
     repo::{cwd_worktree, worktrees_dir},
     ticket::{
         Priority, Status, Ticket, append_journal, create_ticket, load_tickets,
-        load_tickets_lenient, resolve_ticket, rewrite_status_and_append, ticket_path,
-        write_priority,
+        load_tickets_lenient, resolve_ticket, rewrite_status_and_append, write_priority,
     },
 };
 use crate::output::print_json;
@@ -289,12 +288,12 @@ fn done(matches: &ArgMatches) -> Result<()> {
     let tickets = load_tickets(&ws_dir)?;
     let ticket = resolve_ticket(&tickets, id)?;
 
-    let path = ticket_path(&ws_dir, ticket.number);
+    let path = &ticket.path;
     let content =
-        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
 
     let new_content = rewrite_status_and_append(&content, reopen, wont_impl, summary.as_deref());
-    write_atomic(&path, &new_content).with_context(|| format!("writing {}", path.display()))?;
+    write_atomic(path, &new_content).with_context(|| format!("writing {}", path.display()))?;
 
     let action = if reopen {
         "reopen"
@@ -332,7 +331,7 @@ fn priority(matches: &ArgMatches) -> Result<()> {
     let tickets = load_tickets(&ws_dir)?;
     let ticket = resolve_ticket(&tickets, id)?;
 
-    write_priority(&ticket_path(&ws_dir, ticket.number), level)?;
+    write_priority(&ticket.path, level)?;
     append_log(
         &ws_dir,
         &format!("priority {:03} {}", ticket.number, level.as_str()),
@@ -360,12 +359,12 @@ fn journal(matches: &ArgMatches) -> Result<()> {
     let tickets = load_tickets(&ws_dir)?;
     let ticket = resolve_ticket(&tickets, id)?;
 
-    let path = ticket_path(&ws_dir, ticket.number);
+    let path = &ticket.path;
     let content =
-        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
 
     let (content, ts) = append_journal(&content, &text, heading.map(String::as_str));
-    write_atomic(&path, &content).with_context(|| format!("writing {}", path.display()))?;
+    write_atomic(path, &content).with_context(|| format!("writing {}", path.display()))?;
 
     if json {
         return print_json(&serde_json::json!({
@@ -385,11 +384,11 @@ fn edit(matches: &ArgMatches) -> Result<()> {
     let tickets = load_tickets(&ws_dir)?;
     let ticket = resolve_ticket(&tickets, id)?;
 
-    let path = ticket_path(&ws_dir, ticket.number);
+    let path = &ticket.path;
     let editor = std::env::var("EDITOR").context("$EDITOR is not set")?;
 
     let status = Command::new(&editor)
-        .arg(&path)
+        .arg(path)
         .status()
         .with_context(|| format!("running {editor}"))?;
     if !status.success() {
@@ -694,6 +693,7 @@ mod tests {
             status,
             priority,
             content: String::new(),
+            path: PathBuf::new(),
         }
     }
 

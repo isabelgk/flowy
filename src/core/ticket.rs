@@ -61,6 +61,10 @@ pub struct Ticket {
     pub status: Status,
     pub priority: Priority,
     pub content: String,
+    // The file the ticket was read from. Its name need not be zero-padded, so it
+    // cannot be rebuilt from `number`.
+    #[serde(skip)]
+    pub path: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -114,6 +118,7 @@ pub fn parse_ticket(path: &Path) -> Result<Ticket> {
         status,
         priority,
         content: body,
+        path: path.to_path_buf(),
     })
 }
 
@@ -136,46 +141,80 @@ pub fn split_frontmatter(raw: &str) -> Option<(&str, &str)> {
     None
 }
 
-// Every ticket that parses, plus one error per numbered file that does not.
-// Markdown files without a numeric name (a README.md, say) are not tickets and
-// are skipped silently.
-pub fn load_tickets_lenient(workstream_dir: &Path) -> (Vec<Ticket>, Vec<anyhow::Error>) {
+// Every `<number>.md` in the tickets dir, as (number, path). Markdown files
+// without a numeric name (a README.md, say) are not tickets.
+fn ticket_files(workstream_dir: &Path) -> Result<Vec<(u32, PathBuf)>> {
     let tickets_dir = workstream_dir.join("tickets");
     let entries = match std::fs::read_dir(&tickets_dir) {
         Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (Vec::new(), Vec::new()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => {
-            let e = anyhow::Error::new(e).context(format!("reading {}", tickets_dir.display()));
-            return (Vec::new(), vec![e]);
+            return Err(anyhow::Error::new(e).context(format!("reading {}", tickets_dir.display())));
         }
     };
-
-    let mut tickets = Vec::new();
-    let mut errors = Vec::new();
+    let mut files = Vec::new();
     for entry in entries {
-        let path = match entry {
-            Ok(entry) => entry.path(),
-            Err(e) => {
-                errors.push(e.into());
-                continue;
-            }
-        };
-        let is_ticket = path.extension().is_some_and(|e| e == "md")
-            && path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .is_some_and(|s| s.parse::<u32>().is_ok());
-        if !is_ticket {
+        let path = entry?.path();
+        if path.extension().is_none_or(|e| e != "md") {
             continue;
         }
+        if let Some(n) = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.parse::<u32>().ok())
+        {
+            files.push((n, path));
+        }
+    }
+    Ok(files)
+}
+
+// Every ticket that parses, plus one error per ticket file that does not.
+pub fn load_tickets_lenient(workstream_dir: &Path) -> (Vec<Ticket>, Vec<anyhow::Error>) {
+    let files = match ticket_files(workstream_dir) {
+        Ok(files) => files,
+        Err(e) => return (Vec::new(), vec![e]),
+    };
+    let mut tickets = Vec::new();
+    let mut errors = Vec::new();
+    for (_, path) in files {
         match parse_ticket(&path) {
             Ok(t) => tickets.push(t),
             Err(e) => errors.push(e),
         }
     }
-
     tickets.sort_by_key(|t| (t.priority, t.number));
     (tickets, errors)
+}
+
+// The ticket numbered `number`, however its filename is padded. Two files for
+// one number (`1.md` and `001.md`) are an error rather than a guess.
+pub fn find_ticket(workstream_dir: &Path, number: u32) -> Result<Option<Ticket>> {
+    let matching: Vec<PathBuf> = ticket_files(workstream_dir)?
+        .into_iter()
+        .filter(|(n, _)| *n == number)
+        .map(|(_, p)| p)
+        .collect();
+    match matching.as_slice() {
+        [] => Ok(None),
+        [path] => parse_ticket(path).map(Some),
+        paths => bail!("{}", ambiguous(number, paths.iter())),
+    }
+}
+
+fn ambiguous<'a>(number: u32, paths: impl Iterator<Item = &'a PathBuf>) -> String {
+    let names: Vec<String> = paths
+        .map(|p| {
+            p.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    format!(
+        "ticket {number} is ambiguous: {} all have that number",
+        names.join(", ")
+    )
 }
 
 // Fails on the first ticket that does not parse, for callers acting on a single
@@ -188,6 +227,8 @@ pub fn load_tickets(workstream_dir: &Path) -> Result<Vec<Ticket>> {
     }
 }
 
+// Where a new ticket numbered `number` is created. An existing ticket's file is
+// `Ticket::path`, which may be named differently.
 pub fn ticket_path(workstream_dir: &Path, number: u32) -> PathBuf {
     workstream_dir
         .join("tickets")
@@ -198,10 +239,19 @@ pub fn resolve_ticket<'a>(tickets: &'a [Ticket], id: &str) -> Result<&'a Ticket>
     let n: u32 = id
         .parse()
         .map_err(|_| anyhow::anyhow!("ticket ID must be numeric, got {id:?}"))?;
-    tickets
-        .iter()
-        .find(|t| t.number == n)
-        .ok_or_else(|| anyhow::anyhow!("no ticket with number {n}"))
+    let mut matching = tickets.iter().filter(|t| t.number == n);
+    let ticket = matching
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("no ticket with number {n}"))?;
+    let rest: Vec<&Ticket> = matching.collect();
+    if !rest.is_empty() {
+        let paths: Vec<&PathBuf> = std::iter::once(ticket)
+            .chain(rest)
+            .map(|t| &t.path)
+            .collect();
+        bail!("{}", ambiguous(n, paths.into_iter()));
+    }
+    Ok(ticket)
 }
 
 // Highest ticket number present, read from filenames rather than by parsing the
@@ -523,6 +573,7 @@ mod tests {
             status: Status::Pending,
             priority: Priority::Medium,
             content: String::new(),
+            path: PathBuf::from(format!("{number:03}.md")),
         }
     }
 
@@ -681,6 +732,30 @@ mod tests {
         assert_eq!(resolve_ticket(&tickets, "01").unwrap().number, 1);
         assert_eq!(resolve_ticket(&tickets, "001").unwrap().number, 1);
         assert_eq!(resolve_ticket(&tickets, "2").unwrap().number, 2);
+    }
+
+    #[test]
+    fn resolve_ticket_refuses_two_files_for_one_number() {
+        let mut other = make_ticket(1);
+        other.path = PathBuf::from("1.md");
+        let tickets = vec![make_ticket(1), other];
+        let err = resolve_ticket(&tickets, "1").unwrap_err();
+        assert!(err.to_string().contains("ambiguous"), "{err}");
+    }
+
+    #[test]
+    fn find_ticket_reads_an_unpadded_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let tickets = dir.path().join("tickets");
+        fs::create_dir_all(&tickets).unwrap();
+        let path = write_ticket(&tickets, "7.md", "+++\ntitle = \"Seven\"\n+++\n");
+
+        let found = find_ticket(dir.path(), 7).unwrap().unwrap();
+        assert_eq!(found.path, path);
+        assert!(find_ticket(dir.path(), 8).unwrap().is_none());
+
+        write_ticket(&tickets, "007.md", "+++\ntitle = \"Also seven\"\n+++\n");
+        assert!(find_ticket(dir.path(), 7).is_err());
     }
 
     #[test]

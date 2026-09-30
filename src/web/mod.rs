@@ -17,7 +17,7 @@ use crate::core::{
     names::workstream_dir,
     notes::resolve_note,
     repo::{cwd_worktree, worktrees_dir},
-    ticket::{Status, load_tickets, parse_ticket, ticket_path},
+    ticket::{Status, find_ticket, load_tickets},
 };
 
 // The largest form is a whole ticket body from the editor, percent-encoded at up
@@ -562,11 +562,9 @@ fn ticket(app: &App, name: &str, number: u32) -> Result<Reply> {
     let Some(ws_dir) = live_workstream(&app.root, name) else {
         return Ok(no_workstream(app, name));
     };
-    let path = ticket_path(&ws_dir, number);
-    if !path.exists() {
+    let Some(ticket) = find_ticket(&ws_dir, number)? else {
         return Ok(no_ticket(app, name, number));
-    }
-    let ticket = parse_ticket(&path)?;
+    };
     let nav = app.nav(Some(name));
     Ok(Reply::html(render::ticket_detail(&nav, name, &ticket)))
 }
@@ -575,11 +573,9 @@ fn edit_ticket(app: &App, name: &str, number: u32, query: &str) -> Result<Reply>
     let Some(ws_dir) = live_workstream(&app.root, name) else {
         return Ok(no_workstream(app, name));
     };
-    let path = ticket_path(&ws_dir, number);
-    if !path.exists() {
+    let Some(ticket) = find_ticket(&ws_dir, number)? else {
         return Ok(no_ticket(app, name, number));
-    }
-    let ticket = parse_ticket(&path)?;
+    };
     let conflict = Form::parse(query).get("conflict") == "1";
     let nav = app.nav(Some(name));
     Ok(Reply::html(render::ticket_edit(

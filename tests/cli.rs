@@ -452,6 +452,63 @@ fn w_with_an_unknown_name_writes_nothing() {
 }
 
 #[test]
+fn tickets_are_addressed_by_their_actual_file() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat"])
+        .assert()
+        .success();
+    let tickets = repo.ws_dir("feat").join("tickets");
+    let seven = tickets.join("7.md");
+    fs::write(
+        &seven,
+        "+++\nstatus = \"pending\"\ntitle = \"Seven\"\n+++\n",
+    )
+    .unwrap();
+
+    repo.cmd()
+        .args(["t", "done", "-w", "feat", "7"])
+        .assert()
+        .success();
+    assert!(
+        fs::read_to_string(&seven)
+            .unwrap()
+            .contains("status = \"complete\"")
+    );
+    assert!(!tickets.join("007.md").exists());
+
+    // The editor is handed the file that exists, not a fresh zero-padded one.
+    let scratch = tempfile::TempDir::new().unwrap();
+    let opened = scratch.path().join("opened");
+    let editor = scratch.path().join("editor.sh");
+    fs::write(
+        &editor,
+        format!("#!/bin/sh\nprintf '%s' \"$1\" > '{}'\n", opened.display()),
+    )
+    .unwrap();
+    let mut perms = fs::metadata(&editor).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    fs::set_permissions(&editor, perms).unwrap();
+    repo.cmd()
+        .env("EDITOR", &editor)
+        .args(["t", "edit", "-w", "feat", "7"])
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read_to_string(&opened).unwrap(),
+        seven.to_str().unwrap()
+    );
+    assert!(!tickets.join("007.md").exists());
+
+    fs::write(tickets.join("007.md"), "+++\ntitle = \"Twin\"\n+++\n").unwrap();
+    repo.cmd()
+        .args(["t", "show", "-w", "feat", "7"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("ambiguous"));
+}
+
+#[test]
 fn t_done_unknown_id_errors() {
     let repo = TestRepo::new();
     repo.cmd()

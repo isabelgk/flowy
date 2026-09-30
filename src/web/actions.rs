@@ -5,8 +5,8 @@ use std::path::Path;
 use crate::core::atomic::write_atomic;
 use crate::core::notes::append_log;
 use crate::core::ticket::{
-    Priority, Ticket, append_journal, create_ticket, parse_ticket, rewrite_body,
-    rewrite_status_and_append, ticket_path, write_priority,
+    Priority, Ticket, append_journal, create_ticket, find_ticket, rewrite_body,
+    rewrite_status_and_append, write_priority,
 };
 
 pub struct Form(HashMap<String, String>);
@@ -43,12 +43,9 @@ pub fn body_hash(body: &str) -> String {
 }
 
 fn read_ticket(ws_dir: &Path, number: u32) -> Result<(std::path::PathBuf, Ticket)> {
-    let path = ticket_path(ws_dir, number);
-    if !path.exists() {
-        bail!("no ticket {number:03} in this workstream");
-    }
-    let ticket = parse_ticket(&path)?;
-    Ok((path, ticket))
+    let ticket = find_ticket(ws_dir, number)?
+        .ok_or_else(|| anyhow::anyhow!("no ticket {number:03} in this workstream"))?;
+    Ok((ticket.path.clone(), ticket))
 }
 
 fn priority_field(form: &Form) -> Result<Option<Priority>> {
@@ -137,6 +134,7 @@ pub fn set_body(ws_dir: &Path, number: u32, form: &Form) -> Result<BodySave> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::ticket::parse_ticket;
 
     #[test]
     fn form_decodes_percent_and_plus() {

@@ -17,10 +17,7 @@ use crate::core::{
     names::{workstream_dir, workstream_subdir},
     notes::append_log,
     repo::cwd_worktree,
-    ticket::{
-        Priority, Status, load_tickets_lenient, rewrite_status_and_append, ticket_path,
-        write_priority,
-    },
+    ticket::{Priority, Status, load_tickets_lenient, rewrite_status_and_append, write_priority},
 };
 
 mod ui;
@@ -358,16 +355,13 @@ fn load_tui_tickets(ws_dir: &Path) -> Vec<TuiTicket> {
     load_tickets_lenient(ws_dir)
         .0
         .into_iter()
-        .map(|t| {
-            let path = ticket_path(ws_dir, t.number);
-            TuiTicket {
-                number: t.number,
-                title: t.title,
-                status: t.status,
-                priority: t.priority,
-                content: t.content,
-                path,
-            }
+        .map(|t| TuiTicket {
+            number: t.number,
+            title: t.title,
+            status: t.status,
+            priority: t.priority,
+            content: t.content,
+            path: t.path,
         })
         .collect()
 }
@@ -460,6 +454,7 @@ fn run_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::ticket::ticket_path;
     use ratatui::backend::TestBackend;
 
     fn ticket_on_disk(frontmatter: &str) -> (tempfile::TempDir, TuiTicket) {
