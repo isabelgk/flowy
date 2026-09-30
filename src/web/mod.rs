@@ -20,8 +20,9 @@ use crate::core::{
     ticket::{Status, load_tickets, parse_ticket, ticket_path},
 };
 
-// Bodies are small forms; anything larger is a client that has lost its way.
-const MAX_BODY: usize = 1 << 20;
+// The largest form is a whole ticket body from the editor, percent-encoded at up
+// to 9 bytes per character.
+const MAX_BODY: usize = 16 << 20;
 
 // How long a sidebar snapshot is served before a refresh is kicked off behind
 // the next request.
@@ -215,21 +216,15 @@ fn serve(app: &App, mut request: Request) -> Result<()> {
             .context("writing response");
     }
 
-    let mut body = String::new();
-    if method == "POST" {
-        request
-            .as_reader()
-            .take(MAX_BODY as u64)
-            .read_to_string(&mut body)
-            .context("reading request body")?;
-    }
-
-    let reply = match route_reply(app, &method, &url, &body, &request) {
-        Ok(reply) => reply,
-        Err(e) => Reply::with_status(
-            400,
-            render::message(&app.nav(None), "Something went wrong", &format!("{e:#}")),
-        ),
+    let reply = match read_body(app, &method, &mut request) {
+        Ok(body) => match route_reply(app, &method, &url, &body, &request) {
+            Ok(reply) => reply,
+            Err(e) => Reply::with_status(
+                400,
+                render::message(&app.nav(None), "Something went wrong", &format!("{e:#}")),
+            ),
+        },
+        Err(reply) => reply,
     };
 
     // Any accepted POST can move a ticket count in the sidebar, so the snapshot
@@ -250,6 +245,58 @@ fn serve(app: &App, mut request: Request) -> Result<()> {
         );
     }
     request.respond(response).context("writing response")
+}
+
+// A partial body still decodes as a valid form, and `base` precedes `body` in
+// the editor's, so a truncated save would pass the conflict check. Anything
+// short of the whole body is refused rather than acted on.
+fn read_body(app: &App, method: &str, request: &mut Request) -> Result<String, Reply> {
+    if method != "POST" {
+        return Ok(String::new());
+    }
+    let too_large = || {
+        Reply::with_status(
+            413,
+            render::message(
+                &app.nav(None),
+                "Too large",
+                &format!(
+                    "flowy web accepts forms up to {} MiB; nothing was saved.",
+                    MAX_BODY >> 20
+                ),
+            ),
+        )
+    };
+    let incomplete = |detail: &str| {
+        Reply::with_status(
+            400,
+            render::message(&app.nav(None), "Incomplete request", detail),
+        )
+    };
+
+    let expected = request.body_length();
+    if expected.is_some_and(|n| n > MAX_BODY) {
+        return Err(too_large());
+    }
+    let mut bytes = Vec::new();
+    if let Err(e) = request
+        .as_reader()
+        .take(MAX_BODY as u64 + 1)
+        .read_to_end(&mut bytes)
+    {
+        return Err(incomplete(&format!(
+            "Reading the form failed ({e}); nothing was saved."
+        )));
+    }
+    if bytes.len() > MAX_BODY {
+        return Err(too_large());
+    }
+    if expected.is_some_and(|n| bytes.len() < n) {
+        return Err(incomplete(
+            "The connection closed before the whole form arrived; nothing was saved.",
+        ));
+    }
+    String::from_utf8(bytes).map_err(|_| incomplete("The form was not valid UTF-8."))
 }
 
 fn route_reply(app: &App, method: &str, url: &str, body: &str, request: &Request) -> Result<Reply> {

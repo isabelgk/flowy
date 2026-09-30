@@ -245,6 +245,39 @@ fn a_workstream_name_cannot_escape_the_worktrees_dir() {
     assert!(!repo.ticket("feat-web", 1).exists());
 }
 
+fn send_head(server: &Server, path: &str, content_length: usize, body: &str) -> String {
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}\r\n\
+         Content-Type: application/x-www-form-urlencoded\r\n\
+         Content-Length: {content_length}\r\nConnection: close\r\n\r\n{body}",
+        port = server.port
+    );
+    let mut stream = TcpStream::connect(("127.0.0.1", server.port)).expect("connect");
+    stream.write_all(request.as_bytes()).expect("send request");
+    stream
+        .shutdown(std::net::Shutdown::Write)
+        .expect("close write half");
+    let mut response = String::new();
+    stream.read_to_string(&mut response).expect("read response");
+    response
+}
+
+#[test]
+fn an_oversized_or_cut_off_body_is_refused() {
+    let repo = repo_with_worktree();
+    let server = Server::start(&repo);
+
+    // Past the size tiny_http reads eagerly, so the body reaches flowy's reader.
+    let body = form(&[("title", "Partial"), ("description", &"x".repeat(4096))]);
+    let response = send_head(&server, "/w/feat-web/tickets", 64 << 20, &body);
+    assert!(response.starts_with("HTTP/1.1 413"), "{response}");
+
+    let response = send_head(&server, "/w/feat-web/tickets", body.len() + 100, &body);
+    assert!(response.starts_with("HTTP/1.1 400"), "{response}");
+
+    assert!(!repo.ticket("feat-web", 1).exists());
+}
+
 #[test]
 fn the_editor_saves_a_body_and_refuses_a_stale_one() {
     let repo = repo_with_worktree();
