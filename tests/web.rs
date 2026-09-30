@@ -310,6 +310,36 @@ fn names_outside_ascii_and_with_url_syntax_are_encoded() {
 }
 
 #[test]
+fn a_slow_upload_does_not_stall_other_requests() {
+    let repo = repo_with_worktree();
+    let server = Server::start(&repo);
+
+    // Headers promise more body than is ever sent, past the size tiny_http
+    // would read eagerly, and the connection stays open.
+    let mut slow = TcpStream::connect(("127.0.0.1", server.port)).expect("connect");
+    let head = format!(
+        "POST /w/feat-web/tickets HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+         Origin: http://127.0.0.1:{port}\r\nContent-Length: 100000\r\n\r\ntitle=Slow",
+        port = server.port
+    );
+    slow.write_all(head.as_bytes()).expect("send head");
+
+    let mut fast = TcpStream::connect(("127.0.0.1", server.port)).expect("connect");
+    fast.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
+    let request = format!(
+        "GET /w/feat-web HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+        server.port
+    );
+    fast.write_all(request.as_bytes()).expect("send request");
+    let mut response = String::new();
+    fast.read_to_string(&mut response)
+        .expect("a page while the upload is still open");
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    drop(slow);
+}
+
+#[test]
 fn the_editor_saves_a_body_and_refuses_a_stale_one() {
     let repo = repo_with_worktree();
     repo.cmd()

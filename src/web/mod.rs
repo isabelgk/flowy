@@ -5,9 +5,9 @@ use anyhow::{Context, Result};
 use maud::Markup;
 use std::io::Read as _;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
-use tiny_http::{Header, Request, Response, Server};
+use tiny_http::{Header, Method, Request, Response, Server};
 
 use actions::{BodySave, Form, body_hash};
 use render::{Filters, Nav, ws_url};
@@ -130,16 +130,49 @@ pub fn run(root: &Path, host: &str, port: u16, open_browser: bool) -> Result<()>
         open_url(&url);
     }
 
-    // Requests are served one at a time. Every mutation is a read-modify-write of
-    // a markdown file, and a single thread is the cheapest way to keep two tabs
-    // from interleaving halfway through one.
+    // Requests are served one at a time on the worker. Every mutation is a
+    // read-modify-write of a markdown file, and a single thread is the cheapest
+    // way to keep two tabs from interleaving halfway through one.
     let app = App::new(root, allowed_hosts(host, bound.port()));
-    for request in server.incoming_requests() {
-        if let Err(e) = serve(&app, request) {
-            eprintln!("flowy web: {e:#}");
+    let (tx, rx) = mpsc::channel::<(Request, Result<String, BodyError>)>();
+    let worker = app.clone();
+    std::thread::spawn(move || {
+        for (request, body) in rx {
+            if let Err(e) = serve(&worker, request, body) {
+                eprintln!("flowy web: {e:#}");
+            }
         }
+    });
+
+    for request in server.incoming_requests() {
+        if !host_allowed(&app, &request) {
+            // No page and no sidebar: the workstream names are what a rebinding
+            // page would be after. Refused before its body is read at all.
+            if let Err(e) =
+                request.respond(Response::from_string("unknown host\n").with_status_code(403))
+            {
+                eprintln!("flowy web: writing response: {e}");
+            }
+            continue;
+        }
+        if request.method() != &Method::Post {
+            let _ = tx.send((request, Ok(String::new())));
+            continue;
+        }
+        // A body arrives at the client's pace, so it is read on its own thread;
+        // read on the worker, one slow upload would stall every other request.
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            let mut request = request;
+            let body = read_body(&mut request);
+            let _ = tx.send((request, body));
+        });
     }
     Ok(())
+}
+
+fn host_allowed(app: &App, request: &Request) -> bool {
+    header(request, "Host").is_some_and(|h| app.hosts.iter().any(|a| a.eq_ignore_ascii_case(&h)))
 }
 
 // A DNS-rebinding page reaches this server under its own hostname, so it is the
@@ -203,20 +236,11 @@ impl Reply {
     }
 }
 
-fn serve(app: &App, mut request: Request) -> Result<()> {
+fn serve(app: &App, request: Request, body: Result<String, BodyError>) -> Result<()> {
     let method = request.method().as_str().to_string();
     let url = request.url().to_string();
 
-    let host = header(&request, "Host");
-    if !host.is_some_and(|h| app.hosts.iter().any(|a| a.eq_ignore_ascii_case(&h))) {
-        // No page and no sidebar: the workstream names are what a rebinding page
-        // would be after.
-        return request
-            .respond(Response::from_string("unknown host\n").with_status_code(403))
-            .context("writing response");
-    }
-
-    let reply = match read_body(app, &method, &mut request) {
+    let reply = match body {
         Ok(body) => match route_reply(app, &method, &url, &body, &request) {
             Ok(reply) => reply,
             Err(e) => Reply::with_status(
@@ -224,7 +248,21 @@ fn serve(app: &App, mut request: Request) -> Result<()> {
                 render::message(&app.nav(None), "Something went wrong", &format!("{e:#}")),
             ),
         },
-        Err(reply) => reply,
+        Err(BodyError::TooLarge) => Reply::with_status(
+            413,
+            render::message(
+                &app.nav(None),
+                "Too large",
+                &format!(
+                    "flowy web accepts forms up to {} MiB; nothing was saved.",
+                    MAX_BODY >> 20
+                ),
+            ),
+        ),
+        Err(BodyError::Incomplete(detail)) => Reply::with_status(
+            400,
+            render::message(&app.nav(None), "Incomplete request", &detail),
+        ),
     };
 
     // Any accepted POST can move a ticket count in the sidebar, so the snapshot
@@ -247,36 +285,18 @@ fn serve(app: &App, mut request: Request) -> Result<()> {
     request.respond(response).context("writing response")
 }
 
+enum BodyError {
+    TooLarge,
+    Incomplete(String),
+}
+
 // A partial body still decodes as a valid form, and `base` precedes `body` in
 // the editor's, so a truncated save would pass the conflict check. Anything
 // short of the whole body is refused rather than acted on.
-fn read_body(app: &App, method: &str, request: &mut Request) -> Result<String, Reply> {
-    if method != "POST" {
-        return Ok(String::new());
-    }
-    let too_large = || {
-        Reply::with_status(
-            413,
-            render::message(
-                &app.nav(None),
-                "Too large",
-                &format!(
-                    "flowy web accepts forms up to {} MiB; nothing was saved.",
-                    MAX_BODY >> 20
-                ),
-            ),
-        )
-    };
-    let incomplete = |detail: &str| {
-        Reply::with_status(
-            400,
-            render::message(&app.nav(None), "Incomplete request", detail),
-        )
-    };
-
+fn read_body(request: &mut Request) -> Result<String, BodyError> {
     let expected = request.body_length();
     if expected.is_some_and(|n| n > MAX_BODY) {
-        return Err(too_large());
+        return Err(BodyError::TooLarge);
     }
     let mut bytes = Vec::new();
     if let Err(e) = request
@@ -284,19 +304,20 @@ fn read_body(app: &App, method: &str, request: &mut Request) -> Result<String, R
         .take(MAX_BODY as u64 + 1)
         .read_to_end(&mut bytes)
     {
-        return Err(incomplete(&format!(
+        return Err(BodyError::Incomplete(format!(
             "Reading the form failed ({e}); nothing was saved."
         )));
     }
     if bytes.len() > MAX_BODY {
-        return Err(too_large());
+        return Err(BodyError::TooLarge);
     }
     if expected.is_some_and(|n| bytes.len() < n) {
-        return Err(incomplete(
-            "The connection closed before the whole form arrived; nothing was saved.",
+        return Err(BodyError::Incomplete(
+            "The connection closed before the whole form arrived; nothing was saved.".into(),
         ));
     }
-    String::from_utf8(bytes).map_err(|_| incomplete("The form was not valid UTF-8."))
+    String::from_utf8(bytes)
+        .map_err(|_| BodyError::Incomplete("The form was not valid UTF-8.".into()))
 }
 
 fn route_reply(app: &App, method: &str, url: &str, body: &str, request: &Request) -> Result<Reply> {
