@@ -1296,6 +1296,50 @@ fn clone_scaffolds_default_branch_workstream() {
 }
 
 #[test]
+fn clone_tracks_origin_branches() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    git_in(tmp.path(), &["init", "-b", "main", src.to_str().unwrap()]);
+    git_in(&src, &["commit", "--allow-empty", "-m", "init"]);
+
+    Command::cargo_bin("flowy")
+        .unwrap()
+        .current_dir(tmp.path())
+        .args(["clone", src.to_str().unwrap(), "project"])
+        .assert()
+        .success();
+    let project = tmp.path().join("project");
+    let main_wt = project.join("worktrees").join("main");
+    assert_eq!(
+        git_out(&main_wt, &["rev-parse", "--abbrev-ref", "main@{upstream}"]).trim(),
+        "origin/main"
+    );
+
+    // A branch pushed after the clone arrives with a fetch, and `wt new` checks
+    // it out rather than branching fresh from HEAD.
+    git_in(&src, &["checkout", "-q", "-b", "later"]);
+    git_in(&src, &["commit", "--allow-empty", "-m", "later work"]);
+    git_in(&project, &["fetch", "--quiet", "origin"]);
+    Command::cargo_bin("flowy")
+        .unwrap()
+        .arg("--repo-root")
+        .arg(&project)
+        .args(["wt", "new", "-b", "later"])
+        .assert()
+        .success();
+
+    let later_wt = project.join("worktrees").join("later");
+    assert_eq!(
+        git_out(&later_wt, &["rev-parse", "HEAD"]),
+        git_out(&src, &["rev-parse", "HEAD"])
+    );
+    assert_eq!(
+        git_out(&later_wt, &["rev-parse", "--abbrev-ref", "@{upstream}"]).trim(),
+        "origin/later"
+    );
+}
+
+#[test]
 fn clone_scaffolds_non_main_default_branch() {
     let tmp = tempfile::tempdir().unwrap();
     let src = tmp.path().join("src");

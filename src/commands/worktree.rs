@@ -159,6 +159,7 @@ pub fn clone(matches: &ArgMatches) -> Result<()> {
         .canonicalize()
         .with_context(|| format!("resolving absolute path for {name}"))?;
     let bare_dir = root.join(".bare");
+    track_origin(&bare_dir)?;
 
     // .git pointer so git commands work from project root
     std::fs::write(root.join(".git"), "gitdir: ./.bare\n").context("writing .git pointer")?;
@@ -226,17 +227,26 @@ fn new(matches: &ArgMatches) -> Result<()> {
     // Self-heal repos scaffolded before workstream notes moved into the worktree.
     ensure_local_excluded(&root)?;
 
-    let branch_exists = Command::new("git")
-        .args(["rev-parse", "--verify", &format!("refs/heads/{branch}")])
-        .current_dir(root.join(".bare"))
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    let ref_exists = |refname: &str| {
+        Command::new("git")
+            .args(["rev-parse", "--verify", "--quiet", refname])
+            .current_dir(root.join(".bare"))
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+    let branch_exists = ref_exists(&format!("refs/heads/{branch}"));
+    let on_origin = !branch_exists
+        && start_point.is_none()
+        && ref_exists(&format!("refs/remotes/origin/{branch}"));
 
     let mut cmd = Command::new("git");
     cmd.arg("worktree").arg("add").arg(&worktree_path);
     if branch_exists {
         cmd.arg(branch);
+    } else if on_origin {
+        cmd.args(["--track", "-b", branch])
+            .arg(format!("origin/{branch}"));
     } else {
         cmd.arg("-b").arg(branch);
         if let Some(sp) = start_point {
@@ -523,6 +533,59 @@ fn tickets_fingerprint(ws_dir: &Path) -> u64 {
         .hash(&mut hasher);
     files.hash(&mut hasher);
     hasher.finish().max(1)
+}
+
+// A bare clone configures no fetch refspec, so `git fetch` would bring in no
+// origin/* refs and no branch could track its remote. Sets the refspec, fetches
+// once, and points every cloned branch at its origin counterpart.
+fn track_origin(bare_dir: &Path) -> Result<()> {
+    run_git(
+        bare_dir,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+    )?;
+    run_git(bare_dir, &["fetch", "--quiet", "origin"])?;
+    let branches = run_git(
+        bare_dir,
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    )?;
+    for branch in branches.lines().filter(|b| !b.is_empty()) {
+        // Written as config rather than `branch --set-upstream-to`, which reports
+        // on stdout.
+        run_git(
+            bare_dir,
+            &["config", &format!("branch.{branch}.remote"), "origin"],
+        )?;
+        run_git(
+            bare_dir,
+            &[
+                "config",
+                &format!("branch.{branch}.merge"),
+                &format!("refs/heads/{branch}"),
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+// Stdout of a git command that has to succeed.
+fn run_git(dir: &Path, args: &[&str]) -> Result<String> {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .with_context(|| format!("running git {}", args.join(" ")))?;
+    if !out.status.success() {
+        bail!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 fn is_dirty(path: &Path) -> Result<bool> {
