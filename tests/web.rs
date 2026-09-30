@@ -8,6 +8,7 @@ use std::process::{Child, Command, Stdio};
 struct Server {
     child: Child,
     port: u16,
+    nav_open: bool,
 }
 
 impl Server {
@@ -36,7 +37,17 @@ impl Server {
             .parse()
             .unwrap_or_else(|_| panic!("unexpected banner: {line:?}"));
 
-        Server { child, port }
+        Server {
+            child,
+            port,
+            nav_open: false,
+        }
+    }
+
+    // Sends the cookie the sidebar toggle sets when it is opened.
+    fn with_nav_open(mut self) -> Server {
+        self.nav_open = true;
+        self
     }
 
     fn get(&self, path: &str) -> (u16, String) {
@@ -65,6 +76,9 @@ impl Server {
             format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n");
         if let Some(origin) = origin {
             request.push_str(&format!("Origin: {origin}\r\n"));
+        }
+        if self.nav_open {
+            request.push_str("Cookie: theme=dark; flowy-nav=open\r\n");
         }
         if method == "POST" {
             request.push_str("Content-Type: application/x-www-form-urlencoded\r\n");
@@ -290,7 +304,7 @@ fn names_outside_ascii_and_with_url_syntax_are_encoded() {
         .args(["wt", "new", "-b", "fix#1"])
         .assert()
         .success();
-    let server = Server::start(&repo);
+    let server = Server::start(&repo).with_nav_open();
 
     let (status, index) = server.get("/");
     assert_eq!(status, 303, "{index}");
@@ -434,7 +448,7 @@ fn status_priority_and_journal_match_the_cli_format() {
 #[test]
 fn the_sidebar_counts_follow_a_mutation() {
     let repo = repo_with_worktree();
-    let server = Server::start(&repo);
+    let server = Server::start(&repo).with_nav_open();
 
     // Prime the sidebar snapshot, then change the counts behind it.
     let (_, before) = server.get("/w/feat-web");
@@ -472,18 +486,47 @@ fn favicon_is_answered_without_a_page() {
 }
 
 #[test]
-fn every_page_carries_the_sidebar_toggle() {
+fn the_sidebar_starts_closed_and_empty() {
     let repo = repo_with_worktree();
     let server = Server::start(&repo);
 
     let (status, page) = server.get("/w/feat-web");
     assert_eq!(status, 200);
     assert!(page.contains("class=\"nav-toggle\""), "{page}");
+    assert!(page.contains("aria-expanded=\"false\""), "{page}");
     assert!(page.contains("aria-controls=\"workstreams\""), "{page}");
-    assert!(page.contains("id=\"workstreams\""), "{page}");
-    // Applied before first paint, so a collapsed sidebar does not flash open.
-    // The stylesheet and the toggle script mention the class and key too, so
-    // look for the restore itself, inside <head>.
-    let head = page.split("</head>").next().unwrap();
-    assert!(head.contains("getItem('flowy-nav')"), "{page}");
+    assert!(
+        page.contains("<html lang=\"en\" class=\"nav-collapsed\">"),
+        "{page}"
+    );
+    // Left empty rather than hidden, so the page never waited on git for it.
+    assert!(page.contains("data-active=\"feat-web\"></nav>"), "{page}");
+    assert!(!page.contains("class=\"ws-name\""), "{page}");
+}
+
+#[test]
+fn the_sidebar_renders_when_its_cookie_says_open() {
+    let repo = repo_with_worktree();
+    let server = Server::start(&repo).with_nav_open();
+
+    let (status, page) = server.get("/w/feat-web");
+    assert_eq!(status, 200);
+    assert!(page.contains("aria-expanded=\"true\""), "{page}");
+    assert!(!page.contains("nav-collapsed\""), "{page}");
+    assert!(page.contains("class=\"active\""), "{page}");
+}
+
+#[test]
+fn the_sidebar_is_served_alone_for_the_toggle() {
+    let repo = repo_with_worktree();
+    let server = Server::start(&repo);
+
+    let (status, fragment) = server.get("/nav?w=feat-web");
+    assert_eq!(status, 200);
+    assert!(!fragment.contains("<html"), "{fragment}");
+    assert!(
+        fragment.contains("<span class=\"ws-name\">feat-web</span>"),
+        "{fragment}"
+    );
+    assert!(fragment.contains("class=\"active\""), "{fragment}");
 }

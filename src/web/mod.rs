@@ -48,6 +48,8 @@ struct App {
     nav: Arc<Mutex<NavState>>,
     // `Host` header values this server answers to.
     hosts: Arc<Vec<String>>,
+    // Whether the page being served shows the sidebar; a closed one skips git.
+    nav_open: bool,
 }
 
 impl App {
@@ -56,6 +58,7 @@ impl App {
             root: root.to_path_buf(),
             nav: Arc::new(Mutex::new(NavState::default())),
             hosts: Arc::new(hosts),
+            nav_open: false,
         }
     }
 
@@ -109,7 +112,7 @@ impl App {
 
     fn nav(&self, active: Option<&str>) -> Nav {
         Nav {
-            workstreams: self.workstreams(),
+            workstreams: self.nav_open.then(|| self.workstreams()),
             active: active.map(str::to_string),
         }
     }
@@ -237,6 +240,10 @@ impl Reply {
 }
 
 fn serve(app: &App, request: Request, body: Result<String, BodyError>) -> Result<()> {
+    let app = &App {
+        nav_open: nav_open(&request),
+        ..app.clone()
+    };
     let method = request.method().as_str().to_string();
     let url = request.url().to_string();
 
@@ -345,6 +352,14 @@ fn route_reply(app: &App, method: &str, url: &str, body: &str, request: &Request
             location: None,
         }),
         Route::Index => index(app),
+        Route::Nav => {
+            let active = Form::parse(query).filled("w").map(str::to_string);
+            let nav = Nav {
+                workstreams: Some(app.workstreams()),
+                active,
+            };
+            Ok(Reply::html(render::sidebar(&nav)))
+        }
         Route::Workstream(name) => workstream(app, &name, query),
         Route::Ticket(name, number) => ticket(app, &name, number),
         Route::EditTicket(name, number) => edit_ticket(app, &name, number, query),
@@ -396,6 +411,13 @@ fn route_reply(app: &App, method: &str, url: &str, body: &str, request: &Request
     }
 }
 
+// The sidebar starts closed; the toggle sets this cookie so the server can leave
+// the git work out of pages that would hide it anyway.
+fn nav_open(request: &Request) -> bool {
+    header(request, "Cookie")
+        .is_some_and(|cookies| cookies.split(';').any(|c| c.trim() == "flowy-nav=open"))
+}
+
 fn header(request: &Request, name: &'static str) -> Option<String> {
     request
         .headers()
@@ -420,6 +442,7 @@ fn same_origin(request: &Request) -> bool {
 #[derive(Debug, PartialEq, Eq)]
 enum Route {
     Index,
+    Nav,
     Workstream(String),
     Ticket(String, u32),
     EditTicket(String, u32),
@@ -451,6 +474,7 @@ fn parse_route(method: &str, path: &str) -> Route {
     match (method, parts.as_slice()) {
         ("GET", []) => Route::Index,
         ("GET", ["favicon.ico"]) => Route::Favicon,
+        ("GET", ["nav"]) => Route::Nav,
         ("GET", ["w", name]) => Route::Workstream(name.to_string()),
         ("GET", ["w", name, "t", id]) => match number(id) {
             Some(n) => Route::Ticket(name.to_string(), n),

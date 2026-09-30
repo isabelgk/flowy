@@ -7,11 +7,6 @@ use crate::core::ticket::{Priority, Status, Ticket};
 const CSS: &str = include_str!("style.css");
 const SCRIPT: &str = include_str!("script.js");
 
-// Runs in <head> rather than with the rest of the script, so a collapsed sidebar
-// is collapsed in the first paint instead of flashing open on every navigation.
-const RESTORE_NAV: &str = "try{if(localStorage.getItem('flowy-nav')==='closed')\
-     document.documentElement.classList.add('nav-collapsed')}catch(e){}";
-
 // Everything but the unreserved characters is escaped, so a branch like `fix#1`
 // or one with an accent survives as a single path segment and a valid header.
 const SEGMENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
@@ -29,7 +24,8 @@ pub fn ws_url(name: &str) -> String {
 }
 
 pub struct Nav {
-    pub workstreams: Vec<WorktreeInfo>,
+    // None when the sidebar is closed and its contents were never loaded.
+    pub workstreams: Option<Vec<WorktreeInfo>>,
     pub active: Option<String>,
 }
 
@@ -94,20 +90,20 @@ fn safe_url(url: CowStr<'_>) -> CowStr<'_> {
 }
 
 pub fn page(title: &str, nav: &Nav, content: Markup) -> Markup {
+    let open = nav.workstreams.is_some();
     html! {
         (DOCTYPE)
-        html lang="en" {
+        html lang="en" class=[(!open).then_some("nav-collapsed")] {
             head {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 title { (title) " - flowy" }
                 style { (PreEscaped(CSS)) }
-                script { (PreEscaped(RESTORE_NAV)) }
             }
             body {
                 header.topbar {
-                    button.nav-toggle type="button" aria-expanded="true"
-                        aria-controls="workstreams" title="Hide workstreams" {
+                    button.nav-toggle type="button" aria-expanded=(open)
+                        aria-controls="workstreams" {
                         span.bars {}
                         span.sr-only { "Toggle workstreams" }
                     }
@@ -115,30 +111,39 @@ pub fn page(title: &str, nav: &Nav, content: Markup) -> Markup {
                     span.title { (title) }
                 }
                 .shell {
-                    nav.sidebar #workstreams {
-                        h2 { "Workstreams" }
-                        @if nav.workstreams.is_empty() {
-                            p.empty { "No worktrees yet." }
-                        }
-                        ul {
-                            @for ws in &nav.workstreams {
-                                li {
-                                    a href={ (ws_url(&ws.name)) }
-                                      class=@if nav.active.as_deref() == Some(ws.name.as_str()) { "active" } @else { "" } {
-                                        span.ws-name { (ws.name) }
-                                        span.ws-meta {
-                                            (ws.tickets_pending) "/" (ws.tickets_total) " open"
-                                            @if ws.dirty { span.dot title="uncommitted changes" { "*" } }
-                                            " - " (format_age(ws.age_seconds))
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    nav.sidebar #workstreams data-active=[nav.active.as_deref()] {
+                        @if open { (sidebar(nav)) }
                     }
                     main.content { (content) }
                 }
                 script { (PreEscaped(SCRIPT)) }
+            }
+        }
+    }
+}
+
+// The sidebar's contents, also served alone for the toggle to load into a page
+// that was rendered with it closed.
+pub fn sidebar(nav: &Nav) -> Markup {
+    let workstreams = nav.workstreams.as_deref().unwrap_or_default();
+    html! {
+        h2 { "Workstreams" }
+        @if workstreams.is_empty() {
+            p.empty { "No worktrees yet." }
+        }
+        ul {
+            @for ws in workstreams {
+                li {
+                    a href={ (ws_url(&ws.name)) }
+                      class=@if nav.active.as_deref() == Some(ws.name.as_str()) { "active" } @else { "" } {
+                        span.ws-name { (ws.name) }
+                        span.ws-meta {
+                            (ws.tickets_pending) "/" (ws.tickets_total) " open"
+                            @if ws.dirty { span.dot title="uncommitted changes" { "*" } }
+                            " - " (format_age(ws.age_seconds))
+                        }
+                    }
+                }
             }
         }
     }

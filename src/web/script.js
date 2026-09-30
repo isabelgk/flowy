@@ -1,15 +1,26 @@
 (function () {
   var root = document.documentElement;
   var button = document.querySelector('.nav-toggle');
-  if (!button) return;
+  var nav = document.getElementById('workstreams');
+  if (!button || !nav) return;
 
+  // A cookie rather than localStorage, so the server knows whether to spend a
+  // `git status` per worktree on the sidebar.
   function remember(collapsed) {
-    try {
-      localStorage.setItem('flowy-nav', collapsed ? 'closed' : 'open');
-    } catch (e) {
-      // Private browsing and file:// origins can refuse storage; the toggle
-      // still works for the life of the page.
-    }
+    document.cookie = 'flowy-nav=' + (collapsed ? 'closed' : 'open') +
+      '; path=/; max-age=31536000; SameSite=Strict';
+  }
+
+  // A page rendered with the sidebar closed has an empty one to fill in.
+  function load() {
+    if (nav.firstElementChild) return;
+    var url = '/nav';
+    if (nav.dataset.active) url += '?w=' + encodeURIComponent(nav.dataset.active);
+    fetch(url).then(function (response) {
+      return response.ok ? response.text() : '';
+    }).then(function (html) {
+      if (!nav.firstElementChild) nav.innerHTML = html;
+    });
   }
 
   function sync() {
@@ -19,7 +30,9 @@
   }
 
   button.addEventListener('click', function () {
-    remember(root.classList.toggle('nav-collapsed'));
+    var collapsed = root.classList.toggle('nav-collapsed');
+    remember(collapsed);
+    if (!collapsed) load();
     sync();
   });
 
