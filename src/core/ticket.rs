@@ -1,3 +1,4 @@
+use crate::core::atomic::write_atomic;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::io::Write as _;
@@ -7,12 +8,31 @@ use std::path::{Path, PathBuf};
 // cannot accept a new file fails instead of looping.
 const RACE_RETRY_LIMIT: u32 = 1000;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Status {
     Pending,
     Complete,
     WontImplement,
+}
+
+impl Status {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Status::Pending => "pending",
+            Status::Complete => "complete",
+            Status::WontImplement => "wont-implement",
+        }
+    }
+
+    // How status.md and the CLI report a move to this status.
+    pub fn verb(self) -> &'static str {
+        match self {
+            Status::Pending => "reopen",
+            Status::Complete => "done",
+            Status::WontImplement => "wont-implement",
+        }
+    }
 }
 
 // Ordered high-to-low: deriving Ord over the declaration order is what makes
@@ -60,6 +80,10 @@ pub struct Ticket {
     pub status: Status,
     pub priority: Priority,
     pub content: String,
+    // The file the ticket was read from. Its name need not be zero-padded, so it
+    // cannot be rebuilt from `number`.
+    #[serde(skip)]
+    pub path: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -83,32 +107,24 @@ pub fn parse_ticket(path: &Path) -> Result<Ticket> {
     let raw =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
 
-    let (status, title, priority, body) = if let Some(stripped) = raw.strip_prefix("+++\n") {
-        if let Some(end) = stripped.find("\n+++\n") {
-            let fm_str = &stripped[..end];
-            let fm: Frontmatter = toml::from_str(fm_str)
-                .with_context(|| format!("parsing frontmatter of '{filename}'"))?;
-            let body = stripped[end + 5..].to_string();
-            let status = match fm.status.as_deref().unwrap_or("pending") {
-                "complete" => Status::Complete,
-                "wont-implement" => Status::WontImplement,
-                _ => Status::Pending,
-            };
-            let title = fm.title.ok_or_else(|| {
-                anyhow::anyhow!("ticket '{filename}' frontmatter missing 'title'")
-            })?;
-            let priority = fm
-                .priority
-                .as_deref()
-                .and_then(|p| p.parse().ok())
-                .unwrap_or_default();
-            (status, title, priority, body)
-        } else {
-            bail!("ticket '{filename}' has malformed frontmatter (no closing +++)")
-        }
-    } else {
-        bail!("ticket '{filename}' has no frontmatter")
+    let (fm_str, body) =
+        frontmatter_or_err(&raw).map_err(|e| anyhow::anyhow!("'{filename}': {e}"))?;
+    let fm: Frontmatter =
+        toml::from_str(fm_str).with_context(|| format!("parsing frontmatter of '{filename}'"))?;
+    let status = match fm.status.as_deref().unwrap_or("pending") {
+        "complete" => Status::Complete,
+        "wont-implement" => Status::WontImplement,
+        _ => Status::Pending,
     };
+    let title = fm
+        .title
+        .ok_or_else(|| anyhow::anyhow!("ticket '{filename}' frontmatter missing 'title'"))?;
+    let priority = fm
+        .priority
+        .as_deref()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or_default();
+    let body = body.to_string();
 
     Ok(Ticket {
         number,
@@ -116,29 +132,117 @@ pub fn parse_ticket(path: &Path) -> Result<Ticket> {
         status,
         priority,
         content: body,
+        path: path.to_path_buf(),
     })
 }
 
-pub fn load_tickets(workstream_dir: &Path) -> Result<Vec<Ticket>> {
-    let tickets_dir = workstream_dir.join("tickets");
-    if !tickets_dir.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut tickets = Vec::new();
-    for entry in std::fs::read_dir(&tickets_dir)
-        .with_context(|| format!("reading {}", tickets_dir.display()))?
-    {
-        let path = entry?.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("md") {
-            tickets.push(parse_ticket(&path)?);
+// Splits a ticket into (frontmatter, body). The frontmatter excludes the line
+// break before the closing `+++`; the body starts after the closing line. Either
+// delimiter may end in CRLF, since editors on Windows write them that way.
+pub fn split_frontmatter(raw: &str) -> Option<(&str, &str)> {
+    let rest = raw
+        .strip_prefix("+++\n")
+        .or_else(|| raw.strip_prefix("+++\r\n"))?;
+    let mut offset = 0;
+    for line in rest.split_inclusive('\n') {
+        if line.trim_end_matches(['\r', '\n']) == "+++" {
+            let fm = rest[..offset].strip_suffix('\n').unwrap_or(&rest[..offset]);
+            let fm = fm.strip_suffix('\r').unwrap_or(fm);
+            return Some((fm, &rest[offset + line.len()..]));
         }
+        offset += line.len();
     }
-
-    tickets.sort_by_key(|t| (t.priority, t.number));
-    Ok(tickets)
+    None
 }
 
+// Every `<number>.md` in the tickets dir, as (number, path). Markdown files
+// without a numeric name (a README.md, say) are not tickets.
+fn ticket_files(workstream_dir: &Path) -> Result<Vec<(u32, PathBuf)>> {
+    let tickets_dir = workstream_dir.join("tickets");
+    let entries = match std::fs::read_dir(&tickets_dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => {
+            return Err(anyhow::Error::new(e).context(format!("reading {}", tickets_dir.display())));
+        }
+    };
+    let mut files = Vec::new();
+    for entry in entries {
+        let path = entry?.path();
+        if path.extension().is_none_or(|e| e != "md") {
+            continue;
+        }
+        if let Some(n) = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.parse::<u32>().ok())
+        {
+            files.push((n, path));
+        }
+    }
+    Ok(files)
+}
+
+// Every ticket that parses, plus one error per ticket file that does not.
+pub fn load_tickets_lenient(workstream_dir: &Path) -> (Vec<Ticket>, Vec<anyhow::Error>) {
+    let files = match ticket_files(workstream_dir) {
+        Ok(files) => files,
+        Err(e) => return (Vec::new(), vec![e]),
+    };
+    let mut tickets = Vec::new();
+    let mut errors = Vec::new();
+    for (_, path) in files {
+        match parse_ticket(&path) {
+            Ok(t) => tickets.push(t),
+            Err(e) => errors.push(e),
+        }
+    }
+    tickets.sort_by_key(|t| (t.priority, t.number));
+    (tickets, errors)
+}
+
+// The ticket numbered `number`, however its filename is padded. Two files for
+// one number (`1.md` and `001.md`) are an error rather than a guess.
+pub fn find_ticket(workstream_dir: &Path, number: u32) -> Result<Option<Ticket>> {
+    let matching: Vec<PathBuf> = ticket_files(workstream_dir)?
+        .into_iter()
+        .filter(|(n, _)| *n == number)
+        .map(|(_, p)| p)
+        .collect();
+    match matching.as_slice() {
+        [] => Ok(None),
+        [path] => parse_ticket(path).map(Some),
+        paths => bail!("{}", ambiguous(number, paths.iter())),
+    }
+}
+
+fn ambiguous<'a>(number: u32, paths: impl Iterator<Item = &'a PathBuf>) -> String {
+    let names: Vec<String> = paths
+        .map(|p| {
+            p.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    format!(
+        "ticket {number} is ambiguous: {} all have that number",
+        names.join(", ")
+    )
+}
+
+// Fails on the first ticket that does not parse, for callers acting on a single
+// workstream where a broken ticket is worth stopping for.
+pub fn load_tickets(workstream_dir: &Path) -> Result<Vec<Ticket>> {
+    let (tickets, errors) = load_tickets_lenient(workstream_dir);
+    match errors.into_iter().next() {
+        Some(e) => Err(e),
+        None => Ok(tickets),
+    }
+}
+
+// Where a new ticket numbered `number` is created. An existing ticket's file is
+// `Ticket::path`, which may be named differently.
 pub fn ticket_path(workstream_dir: &Path, number: u32) -> PathBuf {
     workstream_dir
         .join("tickets")
@@ -149,10 +253,19 @@ pub fn resolve_ticket<'a>(tickets: &'a [Ticket], id: &str) -> Result<&'a Ticket>
     let n: u32 = id
         .parse()
         .map_err(|_| anyhow::anyhow!("ticket ID must be numeric, got {id:?}"))?;
-    tickets
-        .iter()
-        .find(|t| t.number == n)
-        .ok_or_else(|| anyhow::anyhow!("no ticket with number {n}"))
+    let mut matching = tickets.iter().filter(|t| t.number == n);
+    let ticket = matching
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("no ticket with number {n}"))?;
+    let rest: Vec<&Ticket> = matching.collect();
+    if !rest.is_empty() {
+        let paths: Vec<&PathBuf> = std::iter::once(ticket)
+            .chain(rest)
+            .map(|t| &t.path)
+            .collect();
+        bail!("{}", ambiguous(n, paths.into_iter()));
+    }
+    Ok(ticket)
 }
 
 // Highest ticket number present, read from filenames rather than by parsing the
@@ -181,6 +294,12 @@ pub fn create_ticket(
     priority: Option<Priority>,
     body: Option<&str>,
 ) -> Result<(u32, PathBuf)> {
+    // TOML would store a newline as a multi-line string, whose lines the
+    // line-based frontmatter rewrites and the `+++` delimiter search would then
+    // read as keys and delimiters of their own.
+    if title.contains(['\n', '\r']) {
+        bail!("a ticket title must be a single line");
+    }
     let tickets_dir = workstream_dir.join("tickets");
     std::fs::create_dir_all(&tickets_dir)
         .with_context(|| format!("creating {}", tickets_dir.display()))?;
@@ -242,94 +361,94 @@ pub fn write_priority(path: &Path, priority: Priority) -> Result<()> {
     let content =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let updated = rewrite_priority(&content, priority)?;
-    std::fs::write(path, updated).with_context(|| format!("writing {}", path.display()))
+    write_atomic(path, updated).with_context(|| format!("writing {}", path.display()))
+}
+
+fn frontmatter_or_err(content: &str) -> Result<(&str, &str)> {
+    split_frontmatter(content).ok_or_else(|| {
+        if content.starts_with("+++") {
+            anyhow::anyhow!("ticket has malformed frontmatter (no closing +++)")
+        } else {
+            anyhow::anyhow!("ticket has no frontmatter")
+        }
+    })
 }
 
 // Rewrites an existing `priority` key in place and otherwise appends one, so a
 // ticket written before priorities existed keeps its other frontmatter and its
 // body byte for byte.
 pub fn rewrite_priority(content: &str, priority: Priority) -> Result<String> {
-    let stripped = content
-        .strip_prefix("+++\n")
-        .ok_or_else(|| anyhow::anyhow!("ticket has no frontmatter"))?;
-    let end = stripped
-        .find("\n+++\n")
-        .ok_or_else(|| anyhow::anyhow!("ticket has malformed frontmatter (no closing +++)"))?;
+    let (fm, body) = frontmatter_or_err(content)?;
+    let fm = set_key(fm, "priority", priority.as_str());
+    Ok(format!("+++\n{fm}\n+++\n{body}"))
+}
 
-    let body = &stripped[end + 5..];
-    let line = format!("priority = \"{}\"", priority.as_str());
-
+// Replaces the line assigning `key`, or appends one, leaving every other line as
+// it was.
+fn set_key(fm: &str, key: &str, value: &str) -> String {
+    let line = format!("{key} = \"{value}\"");
     let mut replaced = false;
-    let mut fm: Vec<String> = stripped[..end]
+    let mut lines: Vec<&str> = fm
         .lines()
         .map(|l| {
-            if l.trim_start().starts_with("priority") && l.contains('=') {
+            if is_key(l, key) {
                 replaced = true;
-                line.clone()
+                line.as_str()
             } else {
-                l.to_string()
+                l
             }
         })
         .collect();
     if !replaced {
-        fm.push(line);
+        lines.push(&line);
     }
+    lines.join("\n")
+}
 
-    Ok(format!("+++\n{}\n+++\n{body}", fm.join("\n")))
+// Whether a frontmatter line assigns `key`, however it is spaced or indented.
+fn is_key(line: &str, key: &str) -> bool {
+    line.split_once('=').is_some_and(|(k, _)| k.trim() == key)
 }
 
 // The `done` / `--reopen` / `--wont-implement` rewrite: replaces the status key
-// and appends a Summary section if the ticket does not already have one.
-pub fn rewrite_status_and_append(
-    content: &str,
-    reopen: bool,
-    wont_impl: bool,
-    summary: Option<&str>,
-) -> String {
-    let new_status = if reopen {
-        "pending"
-    } else if wont_impl {
-        "wont-implement"
-    } else {
-        "complete"
+// and adds the summary, if given, to the ticket's Summary section.
+pub fn rewrite_status_and_append(content: &str, status: Status, summary: Option<&str>) -> String {
+    let new_status = status.as_str();
+    let result = match split_frontmatter(content) {
+        Some((fm, after)) => {
+            // parse_ticket reads a missing status as pending, so a ticket without
+            // one still needs the key written for the change to take effect.
+            let fm = set_key(fm, "status", new_status);
+            format!("+++\n{fm}\n+++\n{after}")
+        }
+        None => format!("+++\nstatus = \"{new_status}\"\n+++\n{content}"),
     };
 
-    let result = if let Some(stripped) = content.strip_prefix("+++\n") {
-        if let Some(end) = stripped.find("\n+++\n") {
-            let fm = &stripped[..end];
-            let new_fm: String = fm
-                .lines()
-                .map(|l| {
-                    if l.starts_with("status =") {
-                        format!("status = \"{new_status}\"")
-                    } else {
-                        l.to_string()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            let after = &stripped[end + 5..];
-            format!("+++\n{new_fm}\n+++\n{after}")
-        } else {
-            format!("+++\nstatus = \"{new_status}\"\n+++\n{content}")
-        }
-    } else {
-        format!("+++\nstatus = \"{new_status}\"\n+++\n{content}")
-    };
-
-    if let Some(s) = summary {
-        let already_has_summary =
-            result.contains("\n## Summary\n") || result.starts_with("## Summary\n");
-        if already_has_summary {
-            result
-        } else if result.ends_with('\n') {
-            format!("{result}\n## Summary\n\n{s}\n")
-        } else {
-            format!("{result}\n\n## Summary\n\n{s}\n")
-        }
-    } else {
-        result
+    match summary {
+        Some(s) => append_summary(&result, s),
+        None => result,
     }
+}
+
+// A ticket keeps one Summary section. When it already has one (a template
+// heading, or an earlier close before a reopen), the text goes at the end of it,
+// ahead of whatever `##` section follows.
+fn append_summary(content: &str, summary: &str) -> String {
+    const HEADING: &str = "\n## Summary\n";
+    let Some(start) = content.rfind(HEADING) else {
+        let sep = if content.ends_with('\n') { "" } else { "\n" };
+        return format!("{content}{sep}\n## Summary\n\n{summary}\n");
+    };
+    let section = start + HEADING.len();
+    let end = content[section..]
+        .find("\n## ")
+        .map_or(content.len(), |i| section + i + 1);
+    let (before, after) = content.split_at(end);
+    let gap = if after.is_empty() { "" } else { "\n" };
+    format!(
+        "{}\n\n{summary}\n{gap}{after}",
+        before.trim_end_matches('\n')
+    )
 }
 
 // Returns the rewritten ticket and the RFC 3339 timestamp stamped on the entry,
@@ -355,13 +474,7 @@ pub fn append_journal(content: &str, text: &str, heading: Option<&str>) -> (Stri
 // Replaces everything below the frontmatter, matching the spacing `create_ticket`
 // writes so a round trip through an editor leaves the file unchanged.
 pub fn rewrite_body(content: &str, body: &str) -> Result<String> {
-    let stripped = content
-        .strip_prefix("+++\n")
-        .ok_or_else(|| anyhow::anyhow!("ticket has no frontmatter"))?;
-    let end = stripped
-        .find("\n+++\n")
-        .ok_or_else(|| anyhow::anyhow!("ticket has malformed frontmatter (no closing +++)"))?;
-    let fm = &stripped[..end];
+    let (fm, _) = frontmatter_or_err(content)?;
 
     let body = body.replace("\r\n", "\n");
     // parse_ticket hands back the body with the blank line that follows the
@@ -457,6 +570,7 @@ mod tests {
             status: Status::Pending,
             priority: Priority::Medium,
             content: String::new(),
+            path: PathBuf::from(format!("{number:03}.md")),
         }
     }
 
@@ -524,6 +638,66 @@ mod tests {
     }
 
     #[test]
+    fn parse_ticket_accepts_crlf_line_endings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_ticket(
+            dir.path(),
+            "001.md",
+            "+++\r\nstatus = \"complete\"\r\ntitle = \"T\"\r\n+++\r\n\r\nBody.\r\n",
+        );
+        let t = parse_ticket(&path).unwrap();
+        assert_eq!(t.status, Status::Complete);
+        assert_eq!(t.title, "T");
+        assert_eq!(t.content, "\r\nBody.\r\n");
+    }
+
+    #[test]
+    fn split_frontmatter_accepts_a_closing_line_at_eof() {
+        assert_eq!(
+            split_frontmatter("+++\ntitle = \"T\"\n+++"),
+            Some(("title = \"T\"", ""))
+        );
+        assert_eq!(split_frontmatter("+++\ntitle = \"T\"\n"), None);
+        assert_eq!(split_frontmatter("title = \"T\"\n"), None);
+    }
+
+    #[test]
+    fn load_tickets_lenient_keeps_the_good_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let tickets = dir.path().join("tickets");
+        fs::create_dir_all(&tickets).unwrap();
+        write_ticket(&tickets, "001.md", "+++\ntitle = \"Good\"\n+++\n");
+        write_ticket(&tickets, "002.md", "+++\ntitle = \"Unclosed\"\n");
+        write_ticket(&tickets, "README.md", "# About these tickets\n");
+
+        let (good, errors) = load_tickets_lenient(dir.path());
+        assert_eq!(good.iter().map(|t| t.number).collect::<Vec<_>>(), [1]);
+        assert_eq!(errors.len(), 1);
+        assert!(format!("{:#}", errors[0]).contains("002.md"));
+
+        let err = load_tickets(dir.path()).unwrap_err();
+        assert!(format!("{err:#}").contains("002.md"));
+    }
+
+    #[test]
+    fn rewrites_accept_crlf_frontmatter() {
+        let input = "+++\r\nstatus = \"pending\"\r\ntitle = \"T\"\r\n+++\r\n\r\nBody.\r\n";
+        let done = rewrite_status_and_append(input, Status::Complete, None);
+        assert!(done.contains("status = \"complete\""), "{done:?}");
+        assert!(done.ends_with("+++\n\r\nBody.\r\n"), "{done:?}");
+        assert!(
+            rewrite_priority(input, Priority::High)
+                .unwrap()
+                .contains("priority = \"high\"")
+        );
+        assert!(
+            rewrite_body(input, "New.")
+                .unwrap()
+                .ends_with("+++\n\nNew.\n")
+        );
+    }
+
+    #[test]
     fn rewrite_priority_replaces_an_existing_key() {
         let input = "+++\nstatus = \"pending\"\npriority = \"low\"\ntitle = \"T\"\n+++\n\nBody.\n";
         let out = rewrite_priority(input, Priority::High).unwrap();
@@ -531,6 +705,13 @@ mod tests {
             out,
             "+++\nstatus = \"pending\"\npriority = \"high\"\ntitle = \"T\"\n+++\n\nBody.\n"
         );
+    }
+
+    #[test]
+    fn rewrite_priority_leaves_other_priority_prefixed_keys() {
+        let input = "+++\npriority_note = \"x\"\n+++\n";
+        let out = rewrite_priority(input, Priority::Low).unwrap();
+        assert_eq!(out, "+++\npriority_note = \"x\"\npriority = \"low\"\n+++\n");
     }
 
     #[test]
@@ -555,6 +736,30 @@ mod tests {
         assert_eq!(resolve_ticket(&tickets, "01").unwrap().number, 1);
         assert_eq!(resolve_ticket(&tickets, "001").unwrap().number, 1);
         assert_eq!(resolve_ticket(&tickets, "2").unwrap().number, 2);
+    }
+
+    #[test]
+    fn resolve_ticket_refuses_two_files_for_one_number() {
+        let mut other = make_ticket(1);
+        other.path = PathBuf::from("1.md");
+        let tickets = vec![make_ticket(1), other];
+        let err = resolve_ticket(&tickets, "1").unwrap_err();
+        assert!(err.to_string().contains("ambiguous"), "{err}");
+    }
+
+    #[test]
+    fn find_ticket_reads_an_unpadded_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let tickets = dir.path().join("tickets");
+        fs::create_dir_all(&tickets).unwrap();
+        let path = write_ticket(&tickets, "7.md", "+++\ntitle = \"Seven\"\n+++\n");
+
+        let found = find_ticket(dir.path(), 7).unwrap().unwrap();
+        assert_eq!(found.path, path);
+        assert!(find_ticket(dir.path(), 8).unwrap().is_none());
+
+        write_ticket(&tickets, "007.md", "+++\ntitle = \"Also seven\"\n+++\n");
+        assert!(find_ticket(dir.path(), 7).is_err());
     }
 
     #[test]
@@ -583,6 +788,18 @@ mod create_tests {
         let (n2, _) = create_ticket(dir.path(), "Second", None, Some("Body.")).unwrap();
         assert_eq!((n1, n2), (1, 2));
         assert!(p1.ends_with("001.md"));
+    }
+
+    #[test]
+    fn create_ticket_refuses_a_multi_line_title() {
+        let dir = tempfile::tempdir().unwrap();
+        for title in ["one\n+++\ntwo", "one\nstatus = \"complete\"", "a\rb"] {
+            assert!(
+                create_ticket(dir.path(), title, None, None).is_err(),
+                "{title:?}"
+            );
+        }
+        assert!(!dir.path().join("tickets/001.md").exists());
     }
 
     #[test]
@@ -661,7 +878,7 @@ mod create_tests {
     #[test]
     fn rewrite_status_pending_to_complete() {
         let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n";
-        let out = rewrite_status_and_append(input, false, false, None);
+        let out = rewrite_status_and_append(input, Status::Complete, None);
         assert_eq!(
             out,
             "+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n"
@@ -669,17 +886,61 @@ mod create_tests {
     }
 
     #[test]
+    fn rewrite_status_matches_the_key_however_it_is_written() {
+        for line in [
+            "status=\"pending\"",
+            "  status = \"pending\"",
+            "status  =  'pending'",
+        ] {
+            let input = format!("+++\n{line}\ntitle = \"T\"\n+++\n");
+            let out = rewrite_status_and_append(&input, Status::Complete, None);
+            assert_eq!(
+                out, "+++\nstatus = \"complete\"\ntitle = \"T\"\n+++\n",
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn rewrite_status_adds_a_missing_key() {
+        let input = "+++\ntitle = \"T\"\nstatus_note = \"x\"\n+++\n\nBody.\n";
+        let out = rewrite_status_and_append(input, Status::WontImplement, None);
+        assert_eq!(
+            out,
+            "+++\ntitle = \"T\"\nstatus_note = \"x\"\nstatus = \"wont-implement\"\n+++\n\nBody.\n"
+        );
+    }
+
+    #[test]
     fn rewrite_status_complete_with_summary() {
         let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n";
-        let out = rewrite_status_and_append(input, false, false, Some("Done"));
+        let out = rewrite_status_and_append(input, Status::Complete, Some("Done"));
         assert!(out.starts_with("+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n"));
         assert!(out.contains("\n## Summary\n\nDone\n"));
     }
 
     #[test]
+    fn rewrite_status_fills_an_existing_summary_section() {
+        let input =
+            "+++\nstatus = \"pending\"\ntitle = \"T\"\n+++\n\n## Summary\n\n## Journal\n\nEntry.\n";
+        let out = rewrite_status_and_append(input, Status::Complete, Some("New"));
+        assert!(
+            out.ends_with("\n## Summary\n\nNew\n\n## Journal\n\nEntry.\n"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn rewrite_status_adds_to_a_summary_left_by_an_earlier_close() {
+        let input = "+++\nstatus = \"pending\"\ntitle = \"T\"\n+++\n\n## Summary\n\nOld.\n";
+        let out = rewrite_status_and_append(input, Status::Complete, Some("New"));
+        assert!(out.ends_with("\n## Summary\n\nOld.\n\nNew\n"), "{out}");
+    }
+
+    #[test]
     fn rewrite_status_pending_to_wont_implement() {
         let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n";
-        let out = rewrite_status_and_append(input, false, true, None);
+        let out = rewrite_status_and_append(input, Status::WontImplement, None);
         assert_eq!(
             out,
             "+++\nstatus = \"wont-implement\"\ntitle = \"My Task\"\n+++\n"
@@ -689,21 +950,21 @@ mod create_tests {
     #[test]
     fn rewrite_status_complete_to_reopen() {
         let input = "+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n";
-        let out = rewrite_status_and_append(input, true, false, None);
+        let out = rewrite_status_and_append(input, Status::Pending, None);
         assert_eq!(out, "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n");
     }
 
     #[test]
     fn rewrite_status_wont_implement_to_reopen() {
         let input = "+++\nstatus = \"wont-implement\"\ntitle = \"My Task\"\n+++\n";
-        let out = rewrite_status_and_append(input, true, false, None);
+        let out = rewrite_status_and_append(input, Status::Pending, None);
         assert_eq!(out, "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n");
     }
 
     #[test]
     fn rewrite_status_multiline_body_preserved() {
         let input = "+++\nstatus = \"pending\"\ntitle = \"My Task\"\n+++\n\nSome body text.\n\n## Section\n\nMore content.\n";
-        let out = rewrite_status_and_append(input, false, false, None);
+        let out = rewrite_status_and_append(input, Status::Complete, None);
         assert!(out.starts_with("+++\nstatus = \"complete\"\ntitle = \"My Task\"\n+++\n"));
         assert!(out.contains("Some body text."));
         assert!(out.contains("## Section"));

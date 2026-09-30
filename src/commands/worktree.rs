@@ -1,17 +1,18 @@
 use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
 use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table};
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
 
+use super::get_repo_root;
 use crate::core::{
     cache::{Cache, WorktreeCache, load_cache, save_cache},
     meta::{Meta, WorktreeMeta, read_meta, write_meta},
     names::safe_name,
-    repo::{archive_root, ensure_local_excluded, find_repo_root, worktrees_dir},
-    ticket::{Status, load_tickets},
+    repo::{archive_root, ensure_local_excluded, worktrees_dir},
+    ticket::{Status, load_tickets_lenient},
 };
 use crate::output::print_json;
 
@@ -23,14 +24,6 @@ pub fn dispatch(matches: &ArgMatches) -> Result<()> {
         Some(("unarchive", sub)) => unarchive(sub),
         Some(("rename", sub)) => rename(sub),
         _ => Ok(()),
-    }
-}
-
-fn get_repo_root(matches: &ArgMatches) -> Result<PathBuf> {
-    if let Some(path) = matches.get_one::<String>("repo-root") {
-        Ok(PathBuf::from(path))
-    } else {
-        find_repo_root()
     }
 }
 
@@ -48,7 +41,7 @@ pub fn init(matches: &ArgMatches) -> Result<()> {
         .with_context(|| format!("resolving path for {name}"))?;
 
     let init_src = root.join(".init-src");
-    let status = Command::new("git")
+    let status = git()
         .args(["init", "-b", "main"])
         .arg(&init_src)
         .status()
@@ -57,7 +50,7 @@ pub fn init(matches: &ArgMatches) -> Result<()> {
         bail!("git init failed");
     }
 
-    let status = Command::new("git")
+    let status = git()
         .args([
             "commit",
             "--allow-empty",
@@ -73,7 +66,7 @@ pub fn init(matches: &ArgMatches) -> Result<()> {
     }
 
     let bare_dir = root.join(".bare");
-    let status = Command::new("git")
+    let status = git()
         .args(["clone", "--bare"])
         .arg(&init_src)
         .arg(&bare_dir)
@@ -85,7 +78,7 @@ pub fn init(matches: &ArgMatches) -> Result<()> {
 
     std::fs::remove_dir_all(&init_src).context("removing .init-src")?;
 
-    let status = Command::new("git")
+    let status = git()
         .args(["remote", "remove", "origin"])
         .current_dir(&bare_dir)
         .status()
@@ -100,7 +93,7 @@ pub fn init(matches: &ArgMatches) -> Result<()> {
     ensure_local_excluded(&root)?;
 
     let worktree_path = root.join("worktrees").join("main");
-    let status = Command::new("git")
+    let status = git()
         .args(["worktree", "add"])
         .arg(&worktree_path)
         .arg("main")
@@ -129,24 +122,33 @@ pub fn init(matches: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
+// The last component of a URL or scp-style `host:path` remote, without `.git`.
+fn clone_dir_name(url: &str) -> Result<String> {
+    let last = url
+        .trim_end_matches('/')
+        .rsplit(['/', ':'])
+        .next()
+        .unwrap_or("");
+    let name = last.strip_suffix(".git").unwrap_or(last);
+    if name.is_empty() || name == "." || name == ".." {
+        bail!("cannot derive a directory name from '{url}'; pass NAME");
+    }
+    Ok(name.to_string())
+}
+
 pub fn clone(matches: &ArgMatches) -> Result<()> {
     let json = matches.get_flag("json");
     let url = matches.get_one::<String>("url").unwrap();
 
-    let name = if let Some(n) = matches.get_one::<String>("name") {
-        n.clone()
-    } else {
-        // Derive from URL: take last path component, strip .git suffix
-        url.trim_end_matches('/')
-            .rsplit('/')
-            .next()
-            .or_else(|| url.rsplit(':').next())
-            .unwrap_or(url)
-            .trim_end_matches(".git")
-            .to_string()
+    let name = match matches.get_one::<String>("name") {
+        Some(n) => n.clone(),
+        None => clone_dir_name(url)?,
     };
+    if Path::new(&name).exists() {
+        bail!("'{name}' already exists");
+    }
 
-    let status = Command::new("git")
+    let status = git()
         .args(["clone", "--bare", url])
         .arg(PathBuf::from(&name).join(".bare"))
         .status()
@@ -159,6 +161,7 @@ pub fn clone(matches: &ArgMatches) -> Result<()> {
         .canonicalize()
         .with_context(|| format!("resolving absolute path for {name}"))?;
     let bare_dir = root.join(".bare");
+    track_origin(&bare_dir)?;
 
     // .git pointer so git commands work from project root
     std::fs::write(root.join(".git"), "gitdir: ./.bare\n").context("writing .git pointer")?;
@@ -185,7 +188,7 @@ pub fn clone(matches: &ArgMatches) -> Result<()> {
 
     let safe = safe_name(&default_branch);
     let worktree_path = root.join("worktrees").join(&safe);
-    let status = Command::new("git")
+    let status = git()
         .args(["worktree", "add"])
         .arg(&worktree_path)
         .arg(&default_branch)
@@ -222,21 +225,40 @@ fn new(matches: &ArgMatches) -> Result<()> {
 
     let name = safe_name(branch);
     let worktree_path = worktrees_dir(&root).join(&name);
+    // `a/b` and `a-b` share a directory; say so rather than surface git's error.
+    if worktree_path.exists() {
+        bail!(
+            "worktree directory {} already exists; branch '{branch}' maps to workstream '{name}'",
+            worktree_path.display()
+        );
+    }
 
     // Self-heal repos scaffolded before workstream notes moved into the worktree.
     ensure_local_excluded(&root)?;
 
-    let branch_exists = Command::new("git")
-        .args(["rev-parse", "--verify", &format!("refs/heads/{branch}")])
-        .current_dir(root.join(".bare"))
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    let ref_exists = |refname: &str| {
+        Command::new("git")
+            .args(["rev-parse", "--verify", "--quiet", refname])
+            .current_dir(root.join(".bare"))
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+    let branch_exists = ref_exists(&format!("refs/heads/{branch}"));
+    if branch_exists && let Some(sp) = start_point {
+        bail!("branch '{branch}' already exists; START_POINT '{sp}' only applies to a new branch");
+    }
+    let on_origin = !branch_exists
+        && start_point.is_none()
+        && ref_exists(&format!("refs/remotes/origin/{branch}"));
 
-    let mut cmd = Command::new("git");
+    let mut cmd = git();
     cmd.arg("worktree").arg("add").arg(&worktree_path);
     if branch_exists {
         cmd.arg(branch);
+    } else if on_origin {
+        cmd.args(["--track", "-b", branch])
+            .arg(format!("origin/{branch}"));
     } else {
         cmd.arg("-b").arg(branch);
         if let Some(sp) = start_point {
@@ -278,7 +300,8 @@ pub struct WorktreeInfo {
     pub path: PathBuf,
     pub branch: String,
     pub dirty: bool,
-    pub age_seconds: i64,
+    // None when HEAD has no commit (unborn branch) or git could not report one.
+    pub age_seconds: Option<i64>,
     pub tickets_pending: usize,
     pub tickets_total: usize,
 }
@@ -299,8 +322,8 @@ pub fn list_worktrees(root: &Path) -> Result<Vec<WorktreeInfo>> {
     Ok(result)
 }
 
-pub fn format_age(age_seconds: i64) -> String {
-    format_age_inner(age_seconds)
+pub fn format_age(age_seconds: Option<i64>) -> String {
+    age_seconds.map_or_else(|| "-".to_string(), format_age_inner)
 }
 
 fn ls(matches: &ArgMatches) -> Result<()> {
@@ -338,7 +361,7 @@ fn ls(matches: &ArgMatches) -> Result<()> {
         table.add_row([
             branch_cell,
             dirty_cell,
-            Cell::new(format_age_inner(wt.age_seconds)),
+            Cell::new(format_age(wt.age_seconds)),
             tickets_label,
         ]);
     }
@@ -449,32 +472,33 @@ fn compute_worktree_entry(
 
     // Use cached commit timestamp if HEAD hasn't moved; else re-fetch from git.
     let commit_ts = match &head_sha {
-        Some(sha) if *sha == entry.head_sha => entry.commit_ts,
+        Some(sha) if *sha == entry.head_sha && entry.commit_ts.is_some() => entry.commit_ts,
         _ => {
-            let ts = commit_timestamp(&path).unwrap_or(0);
+            let ts = commit_timestamp(&path);
             entry.head_sha = head_sha.unwrap_or_default();
             entry.commit_ts = ts;
             ts
         }
     };
-    let age_seconds = (chrono::Utc::now().timestamp() - commit_ts).max(0);
+    let age_seconds = commit_ts.map(|ts| (chrono::Utc::now().timestamp() - ts).max(0));
 
-    // Use cached ticket counts if the tickets directory mtime is unchanged.
-    let mtime = tickets_dir_mtime(&ws_dir);
-    let (tickets_pending, tickets_total) = if mtime != 0 && mtime == entry.tickets_dir_mtime {
-        (entry.tickets_pending, entry.tickets_total)
-    } else {
-        let tickets = load_tickets(&ws_dir).unwrap_or_default();
-        let pending = tickets
-            .iter()
-            .filter(|t| t.status == Status::Pending)
-            .count();
-        let total = tickets.len();
-        entry.tickets_dir_mtime = mtime;
-        entry.tickets_pending = pending;
-        entry.tickets_total = total;
-        (pending, total)
-    };
+    let fingerprint = tickets_fingerprint(&ws_dir);
+    let (tickets_pending, tickets_total) =
+        if fingerprint != 0 && fingerprint == entry.tickets_fingerprint {
+            (entry.tickets_pending, entry.tickets_total)
+        } else {
+            // A ticket that does not parse is left out of the counts.
+            let (tickets, _) = load_tickets_lenient(&ws_dir);
+            let pending = tickets
+                .iter()
+                .filter(|t| t.status == Status::Pending)
+                .count();
+            let total = tickets.len();
+            entry.tickets_fingerprint = fingerprint;
+            entry.tickets_pending = pending;
+            entry.tickets_total = total;
+            (pending, total)
+        };
 
     let info = WorktreeInfo {
         name: name.clone(),
@@ -488,28 +512,102 @@ fn compute_worktree_entry(
     (name, info, entry)
 }
 
-fn tickets_dir_mtime(ws_dir: &Path) -> u64 {
-    // Max mtime across ticket files — directory mtime only changes on add/remove,
-    // not on content edits (e.g. status changes written in-place). Nanoseconds,
-    // because a status change landing in the same second as the previous count
-    // would otherwise read as no change at all and keep the stale count forever.
+// Changes whenever a ticket is added, removed, renamed, or rewritten: every
+// entry's name, size, and mtime go into it, with the directory's own mtime. File
+// mtimes alone miss a deleted ticket, or one copied in with an old mtime. Hashed
+// with DefaultHasher, which can change between builds; a mismatch only costs a
+// recount. 0 means there is no tickets directory.
+fn tickets_fingerprint(ws_dir: &Path) -> u64 {
+    use std::hash::{Hash, Hasher};
+
     let dir = ws_dir.join("tickets");
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return 0;
     };
-    entries
+    let nanos = |m: &std::fs::Metadata| {
+        m.modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_nanos())
+    };
+    let mut files: Vec<_> = entries
         .flatten()
         .filter_map(|e| {
-            e.metadata()
-                .ok()?
-                .modified()
-                .ok()?
-                .duration_since(std::time::UNIX_EPOCH)
-                .ok()
-                .map(|d| d.as_nanos() as u64)
+            let m = e.metadata().ok()?;
+            Some((e.file_name(), m.len(), nanos(&m)))
         })
-        .max()
+        .collect();
+    files.sort();
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::fs::metadata(&dir)
+        .map(|m| nanos(&m))
         .unwrap_or(0)
+        .hash(&mut hasher);
+    files.hash(&mut hasher);
+    hasher.finish().max(1)
+}
+
+// For git commands whose output is not captured. Some report on stdout ("HEAD is
+// now at ..."), which would land ahead of --json output, so stdout goes to
+// stderr with the rest of git's chatter.
+fn git() -> Command {
+    let mut cmd = Command::new("git");
+    cmd.stdout(std::io::stderr());
+    cmd
+}
+
+// A bare clone configures no fetch refspec, so `git fetch` would bring in no
+// origin/* refs and no branch could track its remote. Sets the refspec, fetches
+// once, and points every cloned branch at its origin counterpart.
+fn track_origin(bare_dir: &Path) -> Result<()> {
+    run_git(
+        bare_dir,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+    )?;
+    run_git(bare_dir, &["fetch", "--quiet", "origin"])?;
+    let branches = run_git(
+        bare_dir,
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    )?;
+    for branch in branches.lines().filter(|b| !b.is_empty()) {
+        // Written as config rather than `branch --set-upstream-to`, which reports
+        // on stdout.
+        run_git(
+            bare_dir,
+            &["config", &format!("branch.{branch}.remote"), "origin"],
+        )?;
+        run_git(
+            bare_dir,
+            &[
+                "config",
+                &format!("branch.{branch}.merge"),
+                &format!("refs/heads/{branch}"),
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+// Stdout of a git command that has to succeed.
+fn run_git(dir: &Path, args: &[&str]) -> Result<String> {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .with_context(|| format!("running git {}", args.join(" ")))?;
+    if !out.status.success() {
+        bail!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 fn is_dirty(path: &Path) -> Result<bool> {
@@ -524,20 +622,17 @@ fn is_dirty(path: &Path) -> Result<bool> {
     Ok(!out.stdout.is_empty())
 }
 
-fn commit_timestamp(path: &Path) -> Result<i64> {
+// None on an unborn HEAD or any git failure.
+fn commit_timestamp(path: &Path) -> Option<i64> {
     let out = Command::new("git")
         .args(["log", "-1", "--format=%ct", "HEAD"])
         .current_dir(path)
         .output()
-        .context("running git log")?;
-
-    let ts_str = String::from_utf8_lossy(&out.stdout);
-    let ts_str = ts_str.trim();
-    if ts_str.is_empty() {
-        return Ok(0);
+        .ok()?;
+    if !out.status.success() {
+        return None;
     }
-
-    ts_str.parse().context("parsing commit timestamp")
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 
 fn format_age_inner(age_seconds: i64) -> String {
@@ -589,8 +684,12 @@ fn archive(matches: &ArgMatches) -> Result<()> {
     // Check dirty status; if dirty and not forced, prompt the user
     let mut needs_force = force;
     if !force && worktree_path.exists() && is_dirty(&worktree_path)? {
-        print!("Worktree '{name}' has uncommitted changes. Archive anyway? [y/N] ");
-        io::stdout().flush()?;
+        // A prompt would corrupt JSON output, and nobody is there to answer it.
+        if json || !io::stdin().is_terminal() {
+            bail!("worktree '{name}' has uncommitted changes; pass --force to archive anyway");
+        }
+        eprint!("Worktree '{name}' has uncommitted changes. Archive anyway? [y/N] ");
+        io::stderr().flush()?;
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
         if !input.trim().eq_ignore_ascii_case("y") {
@@ -606,13 +705,20 @@ fn archive(matches: &ArgMatches) -> Result<()> {
     let archive_dir = crate::core::names::archived_workstream_dir(&root, name);
     std::fs::create_dir_all(archive_root(&root)).context("creating notes/workstreams/archive/")?;
 
-    if ws_dir.exists() {
+    // git refuses to remove a worktree holding submodules unless forced. The
+    // dirty check above already covered their contents.
+    if worktree_path.exists() && !needs_force && has_submodules(&worktree_path)? {
+        needs_force = true;
+    }
+
+    let moved_notes = ws_dir.exists();
+    if moved_notes {
         std::fs::rename(&ws_dir, &archive_dir)
             .with_context(|| format!("moving {} to {}", ws_dir.display(), archive_dir.display()))?;
     }
 
     if worktree_path.exists() {
-        let mut cmd = Command::new("git");
+        let mut cmd = git();
         cmd.arg("worktree").arg("remove");
         if needs_force {
             cmd.arg("--force");
@@ -621,7 +727,17 @@ fn archive(matches: &ArgMatches) -> Result<()> {
 
         let status = cmd.status().context("running git worktree remove")?;
         if !status.success() {
-            bail!("git worktree remove failed");
+            // A worktree that survives with its notes in archive/ is neither live
+            // nor archived, and neither `unarchive` nor `rename` can recover it.
+            if moved_notes {
+                std::fs::rename(&archive_dir, &ws_dir).with_context(|| {
+                    format!(
+                        "git worktree remove failed, and moving notes back from {} also failed",
+                        archive_dir.display()
+                    )
+                })?;
+            }
+            bail!("git worktree remove failed; {name} is left unarchived");
         }
     }
 
@@ -651,7 +767,7 @@ fn unarchive(matches: &ArgMatches) -> Result<()> {
     // The worktree must exist before the notes can move into it, so create it
     // first and unwind it if the move fails.
     // Branch already exists in the bare repo; no -b flag needed.
-    let status = Command::new("git")
+    let status = git()
         .arg("worktree")
         .arg("add")
         .arg(&worktree_path)
@@ -681,7 +797,7 @@ fn unarchive(matches: &ArgMatches) -> Result<()> {
 
     if let Err(e) = restore {
         // Leave the workstream cleanly archived rather than half-restored.
-        let _ = Command::new("git")
+        let _ = git()
             .args(["worktree", "remove", "--force"])
             .arg(&worktree_path)
             .current_dir(root.join(".bare"))
@@ -759,7 +875,7 @@ fn rename(matches: &ArgMatches) -> Result<()> {
     let mut moved_branch = false;
 
     if renaming_branch {
-        let status = Command::new("git")
+        let status = git()
             .args(["branch", "-m", &old_branch, new_branch])
             .current_dir(root.join(".bare"))
             .status()
@@ -819,56 +935,111 @@ fn move_worktree(root: &Path, old: &Path, new: &Path) -> Result<()> {
         .arg(old)
         .arg(new)
         .current_dir(root.join(".bare"))
-        .status()
+        .output()
         .context("running git worktree move")?;
-    if moved.success() {
+    if moved.status.success() {
         return Ok(());
     }
+    let git_error = String::from_utf8_lossy(&moved.stderr).trim().to_string();
 
-    // git refuses to move a worktree containing submodules, and the check is on
-    // the gitlinks in the tree (not on init state), so deinit alone won't let
-    // `git worktree move` succeed. Move it by hand and fix the admin pointers.
-    deinit_submodules(old);
+    // git refuses to move a worktree containing submodules, and that is the only
+    // refusal worth working around; a lock, for one, has to stay honored.
+    let submodules = submodule_git_dirs(old)?;
+    if submodules.is_empty() || admin_dir(old)?.join("locked").exists() {
+        bail!("git worktree move failed: {git_error}");
+    }
+
+    // Moving the tree as-is keeps untracked and uncommitted submodule work. The
+    // submodules' own `.git` files are relative and stay at the same depth, so
+    // only the admin pointer and each submodule's core.worktree go stale.
     std::fs::rename(old, new)
         .with_context(|| format!("moving {} to {}", old.display(), new.display()))?;
-    repair_worktree_gitdir(new)?;
-
-    // Restore submodule working trees; this also refreshes each core.worktree.
-    let status = Command::new("git")
-        .args(["submodule", "update", "--init", "--recursive"])
-        .current_dir(new)
-        .status()
-        .context("running git submodule update --init --recursive")?;
-    if !status.success() {
-        bail!("git submodule update --init --recursive failed after manual move");
+    repair_worktree_gitdir(root, new)?;
+    for (path, git_dir) in submodules {
+        let status = git()
+            .args(["config", "--file"])
+            .arg(git_dir.join("config"))
+            .arg("core.worktree")
+            .arg(new.join(&path))
+            .status()
+            .context("running git config core.worktree")?;
+        if !status.success() {
+            bail!("updating core.worktree for submodule {path} failed");
+        }
     }
     Ok(())
 }
 
-fn deinit_submodules(worktree: &Path) {
-    // Best-effort: a repo with no submodules has nothing to deinit.
-    let _ = Command::new("git")
-        .args(["submodule", "deinit", "--all", "-f"])
+// (path relative to the worktree, absolute git dir) for every checked-out
+// submodule, nested ones included.
+fn submodule_git_dirs(worktree: &Path) -> Result<Vec<(String, PathBuf)>> {
+    let out = Command::new("git")
+        .args([
+            "submodule",
+            "foreach",
+            "--quiet",
+            "--recursive",
+            "echo \"$displaypath\"",
+        ])
         .current_dir(worktree)
-        .status();
+        .output()
+        .context("running git submodule foreach")?;
+    if !out.status.success() {
+        bail!(
+            "listing submodules failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|path| {
+            let git_dir = Command::new("git")
+                .args(["rev-parse", "--absolute-git-dir"])
+                .current_dir(worktree.join(path))
+                .output()
+                .with_context(|| format!("resolving the git dir of submodule {path}"))?;
+            if !git_dir.status.success() {
+                bail!("resolving the git dir of submodule {path} failed");
+            }
+            let git_dir = String::from_utf8_lossy(&git_dir.stdout).trim().to_string();
+            Ok((path.to_string(), PathBuf::from(git_dir)))
+        })
+        .collect()
 }
 
-fn repair_worktree_gitdir(new_worktree: &Path) -> Result<()> {
-    // The worktree's own .git file points (absolutely) at its admin dir under
-    // .bare/worktrees/<id>, unaffected by the move. Only the reverse pointer
-    // (admin/gitdir -> worktree/.git) still names the pre-move path.
-    let git_file = new_worktree.join(".git");
+// A deinitialized submodule leaves no checkout but keeps its git dir under the
+// admin dir's modules/, and git still counts it.
+fn has_submodules(worktree: &Path) -> Result<bool> {
+    Ok(admin_dir(worktree)?.join("modules").is_dir() || !submodule_git_dirs(worktree)?.is_empty())
+}
+
+// The worktree's admin dir under .bare/worktrees/<id>, read from its .git file.
+fn admin_dir(worktree: &Path) -> Result<PathBuf> {
+    let git_file = worktree.join(".git");
     let content = std::fs::read_to_string(&git_file)
         .with_context(|| format!("reading {}", git_file.display()))?;
-    let admin_dir = content
+    content
         .lines()
         .find_map(|l| l.strip_prefix("gitdir: "))
-        .map(|p| PathBuf::from(p.trim()))
-        .with_context(|| format!("no gitdir pointer in {}", git_file.display()))?;
+        // Relative under worktree.useRelativePaths; join keeps an absolute one as is.
+        .map(|p| worktree.join(p.trim()))
+        .with_context(|| format!("no gitdir pointer in {}", git_file.display()))
+}
 
-    let pointer = admin_dir.join("gitdir");
-    std::fs::write(&pointer, format!("{}\n", git_file.display()))
-        .with_context(|| format!("writing {}", pointer.display()))
+// After a manual move the admin dir's gitdir still names the old path. git
+// rewrites it in whichever form worktree.useRelativePaths asks for.
+fn repair_worktree_gitdir(root: &Path, new_worktree: &Path) -> Result<()> {
+    let status = git()
+        .args(["worktree", "repair"])
+        .arg(new_worktree)
+        .current_dir(root.join(".bare"))
+        .status()
+        .context("running git worktree repair")?;
+    if !status.success() {
+        bail!("git worktree repair failed for {}", new_worktree.display());
+    }
+    Ok(())
 }
 
 fn report_partial(moved_branch: bool, old_branch: &str, new_branch: &str, moved_worktree: bool) {
@@ -887,42 +1058,64 @@ mod tests {
     use super::*;
 
     #[test]
+    fn clone_dir_name_handles_urls_and_scp_remotes() {
+        assert_eq!(clone_dir_name("https://h/u/repo.git").unwrap(), "repo");
+        assert_eq!(clone_dir_name("https://h/u/repo/").unwrap(), "repo");
+        assert_eq!(clone_dir_name("git@h:u/repo.git").unwrap(), "repo");
+        assert_eq!(clone_dir_name("host:repo.git").unwrap(), "repo");
+        assert!(clone_dir_name("host:").is_err());
+    }
+
+    #[test]
+    fn unborn_head_has_no_age() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let status = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert_eq!(commit_timestamp(dir.path()), None);
+        assert_eq!(format_age(None), "-");
+    }
+
+    #[test]
     fn format_age_under_minute_is_now() {
-        assert_eq!(format_age(0), "now");
-        assert_eq!(format_age(59), "now");
-        assert_eq!(format_age(-10), "now");
+        assert_eq!(format_age_inner(0), "now");
+        assert_eq!(format_age_inner(59), "now");
+        assert_eq!(format_age_inner(-10), "now");
     }
 
     #[test]
     fn format_age_minutes() {
-        assert_eq!(format_age(60), "1m");
-        assert_eq!(format_age(3599), "59m");
+        assert_eq!(format_age_inner(60), "1m");
+        assert_eq!(format_age_inner(3599), "59m");
     }
 
     #[test]
     fn format_age_hours() {
-        assert_eq!(format_age(3600), "1h");
-        assert_eq!(format_age(86399), "23h");
+        assert_eq!(format_age_inner(3600), "1h");
+        assert_eq!(format_age_inner(86399), "23h");
     }
 
     #[test]
     fn format_age_days() {
-        assert_eq!(format_age(86400), "1d");
-        assert_eq!(format_age(7 * 86400 - 1), "6d");
+        assert_eq!(format_age_inner(86400), "1d");
+        assert_eq!(format_age_inner(7 * 86400 - 1), "6d");
     }
 
     #[test]
     fn format_age_weeks() {
-        assert_eq!(format_age(7 * 86400), "1w");
+        assert_eq!(format_age_inner(7 * 86400), "1w");
     }
 
     #[test]
     fn format_age_months() {
-        assert_eq!(format_age(30 * 86400), "1mo");
+        assert_eq!(format_age_inner(30 * 86400), "1mo");
     }
 
     #[test]
     fn format_age_years() {
-        assert_eq!(format_age(365 * 86400), "1y");
+        assert_eq!(format_age_inner(365 * 86400), "1y");
     }
 }

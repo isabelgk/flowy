@@ -1,5 +1,6 @@
 mod common;
 
+use assert_cmd::Command;
 use common::{TestRepo, archived_ws_dir_in, git_in, git_out, ws_dir_in};
 use predicates::prelude::*;
 use std::fs;
@@ -220,6 +221,70 @@ fn wt_archive_removes_worktree_and_moves_notes() {
 }
 
 #[test]
+fn wt_archive_removes_a_worktree_with_a_submodule() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat/sub"])
+        .assert()
+        .success();
+    let worktree = repo.root.join("worktrees").join("feat-sub");
+
+    let outside = repo.root.parent().unwrap().to_path_buf();
+    let sub_src = outside.join("subsrc");
+    git_in(&outside, &["init", "-b", "main", sub_src.to_str().unwrap()]);
+    git_in(&sub_src, &["commit", "--allow-empty", "-m", "sub init"]);
+    git_in(
+        &worktree,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub_src.to_str().unwrap(),
+            "sub",
+        ],
+    );
+    git_in(&worktree, &["commit", "-m", "add submodule"]);
+
+    repo.cmd()
+        .args(["wt", "archive", "feat-sub"])
+        .assert()
+        .success();
+
+    assert!(!worktree.exists(), "worktree should be removed");
+    assert!(archived_ws_dir_in(&repo.root, "feat-sub").exists());
+}
+
+#[test]
+fn wt_archive_restores_notes_when_removal_fails() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat/locked"])
+        .assert()
+        .success();
+    let worktree = repo.root.join("worktrees").join("feat-locked");
+    git_in(&worktree, &["worktree", "lock", worktree.to_str().unwrap()]);
+    repo.cmd()
+        .args(["t", "add", "-w", "feat-locked", "Survives"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .args(["wt", "archive", "feat-locked"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("left unarchived"));
+
+    assert!(worktree.exists());
+    assert!(!archived_ws_dir_in(&repo.root, "feat-locked").exists());
+    repo.cmd()
+        .args(["t", "list", "-w", "feat-locked"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Survives"));
+}
+
+#[test]
 fn wt_unarchive_restores_worktree_and_notes() {
     let repo = TestRepo::new();
     repo.cmd()
@@ -248,6 +313,199 @@ fn wt_unarchive_restores_worktree_and_notes() {
         !archived_ws_dir_in(&repo.root, "test-branch").exists(),
         "archive entry should be removed"
     );
+}
+
+#[test]
+fn a_broken_ticket_does_not_hide_the_rest() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat"])
+        .assert()
+        .success();
+    let tickets = repo.ws_dir("feat").join("tickets");
+    fs::write(tickets.join("001.md"), "+++\ntitle = \"Readable\"\n+++\n").unwrap();
+    fs::write(tickets.join("002.md"), "+++\ntitle = \"Unclosed\"\n").unwrap();
+    fs::write(
+        tickets.join("003.md"),
+        "+++\r\ntitle = \"Windows\"\r\n+++\r\n",
+    )
+    .unwrap();
+    fs::write(tickets.join("README.md"), "# Not a ticket\n").unwrap();
+
+    repo.cmd()
+        .args(["t", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Readable"))
+        .stdout(predicate::str::contains("Windows"))
+        .stderr(predicate::str::contains("002.md"))
+        .stderr(predicate::str::contains("README").not());
+
+    repo.cmd()
+        .args(["t", "status", "-w", "feat"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("2 pending / 2 total"));
+
+    repo.cmd()
+        .args(["t", "list", "-w", "feat"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("002.md"));
+}
+
+#[test]
+fn wt_ls_counts_follow_deleted_and_back_dated_tickets() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat"])
+        .assert()
+        .success();
+    for title in ["One", "Two"] {
+        repo.cmd()
+            .args(["t", "add", "-w", "feat", title])
+            .assert()
+            .success();
+    }
+    let total = || {
+        let out = repo.cmd().args(["--json", "wt", "ls"]).output().unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        json[0]["tickets_total"].as_u64().unwrap()
+    };
+    assert_eq!(total(), 2);
+
+    // 001 is not the newest ticket, so the newest mtime does not move.
+    fs::remove_file(repo.ticket("feat", 1)).unwrap();
+    assert_eq!(total(), 1);
+
+    let copied = repo.ticket("feat", 7);
+    fs::write(&copied, "+++\ntitle = \"Copied\"\n+++\n").unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&copied)
+        .unwrap()
+        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000))
+        .unwrap();
+    assert_eq!(total(), 2);
+}
+
+#[test]
+fn w_names_an_archived_workstream() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["t", "add", "-w", "feat", "Kept"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["notes", "write", "-w", "feat", "planning"])
+        .write_stdin("the plan\n")
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["wt", "archive", "feat"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .args(["notes", "show", "-w", "feat", "planning"])
+        .assert()
+        .success()
+        .stdout("the plan\n");
+    repo.cmd()
+        .args(["t", "list", "-w", "feat"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Kept"));
+    repo.cmd()
+        .args(["notes", "write", "-w", "feat", "next"])
+        .write_stdin("later\n")
+        .assert()
+        .success();
+    assert!(
+        archived_ws_dir_in(&repo.root, "feat")
+            .join("next.md")
+            .exists()
+    );
+
+    // No stray worktree dir, so unarchive still has somewhere to go.
+    assert!(!repo.root.join("worktrees").join("feat").exists());
+    repo.cmd()
+        .args(["wt", "unarchive", "feat"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn w_with_an_unknown_name_writes_nothing() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["notes", "write", "-w", "typo", "planning"])
+        .write_stdin("lost\n")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no workstream named 'typo'"));
+    assert!(!repo.root.join("worktrees").join("typo").exists());
+}
+
+#[test]
+fn tickets_are_addressed_by_their_actual_file() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat"])
+        .assert()
+        .success();
+    let tickets = repo.ws_dir("feat").join("tickets");
+    let seven = tickets.join("7.md");
+    fs::write(
+        &seven,
+        "+++\nstatus = \"pending\"\ntitle = \"Seven\"\n+++\n",
+    )
+    .unwrap();
+
+    repo.cmd()
+        .args(["t", "done", "-w", "feat", "7"])
+        .assert()
+        .success();
+    assert!(
+        fs::read_to_string(&seven)
+            .unwrap()
+            .contains("status = \"complete\"")
+    );
+    assert!(!tickets.join("007.md").exists());
+
+    // The editor is handed the file that exists, not a fresh zero-padded one.
+    let scratch = tempfile::TempDir::new().unwrap();
+    let opened = scratch.path().join("opened");
+    let editor = scratch.path().join("editor.sh");
+    fs::write(
+        &editor,
+        format!("#!/bin/sh\nprintf '%s' \"$1\" > '{}'\n", opened.display()),
+    )
+    .unwrap();
+    let mut perms = fs::metadata(&editor).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    fs::set_permissions(&editor, perms).unwrap();
+    repo.cmd()
+        .env("EDITOR", &editor)
+        .args(["t", "edit", "-w", "feat", "7"])
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read_to_string(&opened).unwrap(),
+        seven.to_str().unwrap()
+    );
+    assert!(!tickets.join("007.md").exists());
+
+    fs::write(tickets.join("007.md"), "+++\ntitle = \"Twin\"\n+++\n").unwrap();
+    repo.cmd()
+        .args(["t", "show", "-w", "feat", "7"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("ambiguous"));
 }
 
 #[test]
@@ -682,33 +940,14 @@ fn t_status_json() {
 }
 
 #[test]
-fn t_edit_opens_ticket_in_editor() {
-    let repo = TestRepo::new();
-    repo.cmd()
-        .args(["wt", "new", "-b", "test/branch"])
-        .assert()
-        .success();
-    repo.cmd()
-        .args(["t", "add", "-w", "test-branch", "My ticket"])
-        .assert()
-        .success();
-
-    repo.cmd()
-        .args(["t", "edit", "-w", "test-branch", "1"])
-        .env("EDITOR", "true")
-        .assert()
-        .success();
-}
-
-#[test]
-fn t_infers_workstream_from_worktree_branch() {
+fn t_infers_workstream_from_worktree_cwd() {
     let repo = TestRepo::new();
     repo.cmd()
         .args(["wt", "new", "-b", "test/branch"])
         .assert()
         .success();
 
-    // No -w flag; workstream should be inferred from the worktree's checked-out branch.
+    // No -w flag; the worktree directory cwd sits in names the workstream.
     repo.cmd()
         .args(["t", "add", "My ticket"])
         .current_dir(repo.root.join("worktrees").join("test-branch"))
@@ -750,27 +989,108 @@ fn t_w_flag_overrides_inferred_branch() {
 #[test]
 fn t_no_branch_errors_with_helpful_message() {
     let repo = TestRepo::new();
-    // Run from a directory outside any git repo; git branch --show-current returns empty.
+    git_in(
+        &repo.root,
+        &["symbolic-ref", "HEAD", "refs/heads/no-such-worktree"],
+    );
+    // Run from a directory outside any git repo, which must not matter. The
+    // ceiling keeps that true when TMPDIR itself sits inside a repo.
     let outside = tempfile::TempDir::new().unwrap();
     repo.cmd()
         .args(["t", "add", "My ticket"])
         .current_dir(outside.path())
+        .env("GIT_CEILING_DIRECTORIES", outside.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("cannot infer workstream"));
+        .stderr(predicate::str::contains(
+            "no workstream named 'no-such-worktree'",
+        ));
+}
+
+#[test]
+fn branch_fallback_reads_the_repo_root_not_the_cwd() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "main"])
+        .assert()
+        .success();
+
+    let elsewhere = tempfile::TempDir::new().unwrap();
+    git_in(elsewhere.path(), &["init", "-b", "unrelated"]);
+    repo.cmd()
+        .args(["notes", "path"])
+        .current_dir(elsewhere.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("worktrees/main/.local/workstream"));
+}
+
+#[test]
+fn branch_fallback_reports_a_failing_git() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let root = dir.path().join("not-a-repo");
+    fs::create_dir_all(root.join("worktrees")).unwrap();
+    common::flowy()
+        .arg("--repo-root")
+        .arg(&root)
+        .env("GIT_CEILING_DIRECTORIES", dir.path())
+        .args(["notes", "path"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("git branch --show-current failed"));
+}
+
+fn stdout_json(cmd: &mut Command) -> serde_json::Value {
+    let out = cmd.output().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|e| panic!("{e}: {:?}", String::from_utf8_lossy(&out.stdout)))
 }
 
 #[test]
 fn wt_new_json() {
     let repo = TestRepo::new();
+    let json = stdout_json(
+        repo.cmd()
+            .args(["wt", "new", "-b", "test/branch", "--json"]),
+    );
+    assert_eq!(json["ok"], true);
+}
 
-    // git worktree add writes "Preparing worktree..." to inherited stdout,
-    // so we check for the JSON fragment rather than parsing the whole buffer.
+#[test]
+fn json_stdout_is_only_json() {
+    let repo = TestRepo::new();
+    stdout_json(repo.cmd().args(["--json", "wt", "new", "-b", "feat"]));
+    stdout_json(repo.cmd().args(["--json", "wt", "archive", "feat"]));
+    stdout_json(repo.cmd().args(["--json", "wt", "unarchive", "feat"]));
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mut init = common::flowy();
+    init.current_dir(tmp.path())
+        .args(["--json", "init", "fresh"]);
+    stdout_json(&mut init);
+}
+
+#[test]
+fn wt_archive_json_refuses_a_dirty_worktree_without_prompting() {
+    let repo = TestRepo::new();
     repo.cmd()
-        .args(["wt", "new", "-b", "test/branch", "--json"])
+        .args(["wt", "new", "-b", "feat"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("\"ok\": true"));
+        .success();
+    fs::write(repo.root.join("worktrees/feat/wip.txt"), "wip\n").unwrap();
+
+    repo.cmd()
+        .args(["--json", "wt", "archive", "feat"])
+        .assert()
+        .failure()
+        .stdout("")
+        .stderr(predicate::str::contains("--force"));
+    assert!(repo.root.join("worktrees/feat").exists());
 }
 
 #[test]
@@ -816,8 +1136,7 @@ fn init_creates_project_structure() {
     let tmp = tempfile::tempdir().unwrap();
     let project = tmp.path().join("myproject");
 
-    assert_cmd::Command::cargo_bin("flowy")
-        .unwrap()
+    common::flowy()
         .args(["init", project.to_str().unwrap()])
         .assert()
         .success()
@@ -852,8 +1171,7 @@ fn init_json_output() {
     let tmp = tempfile::tempdir().unwrap();
     let project = tmp.path().join("myproject");
 
-    assert_cmd::Command::cargo_bin("flowy")
-        .unwrap()
+    common::flowy()
         .args(["init", project.to_str().unwrap(), "--json"])
         .assert()
         .success()
@@ -864,8 +1182,7 @@ fn init_json_output() {
 fn init_with_relative_path_creates_worktree() {
     let tmp = tempfile::tempdir().unwrap();
 
-    assert_cmd::Command::cargo_bin("flowy")
-        .unwrap()
+    common::flowy()
         .current_dir(tmp.path())
         .args(["init", "myproject"])
         .assert()
@@ -887,8 +1204,7 @@ fn init_fails_if_directory_exists() {
     let project = tmp.path().join("existing");
     fs::create_dir_all(&project).unwrap();
 
-    assert_cmd::Command::cargo_bin("flowy")
-        .unwrap()
+    common::flowy()
         .args(["init", project.to_str().unwrap()])
         .assert()
         .failure()
@@ -926,7 +1242,7 @@ fn t_add_title_with_special_chars_round_trips() {
     );
 }
 
-// Bug fix: running `done --summary` twice must not append a second ## Summary.
+// Running `done --summary` twice keeps one ## Summary section and both texts.
 #[test]
 fn t_done_summary_not_duplicated_on_second_call() {
     let repo = TestRepo::new();
@@ -959,6 +1275,8 @@ fn t_done_summary_not_duplicated_on_second_call() {
         1,
         "exactly one ## Summary section should exist"
     );
+    assert!(content.contains("First"), "{content}");
+    assert!(content.contains("Second"), "{content}");
 }
 
 // Bug fix: if `git worktree add` fails during unarchive the notes must be
@@ -976,15 +1294,7 @@ fn wt_unarchive_rolls_back_notes_on_git_failure() {
         .success();
 
     // Delete the branch from the bare repo so git worktree add will fail.
-    std::process::Command::new("git")
-        .args(["branch", "-D", "feat"])
-        .current_dir(repo.root.join(".bare"))
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .status()
-        .expect("git branch -D");
+    git_in(&repo.root.join(".bare"), &["branch", "-D", "feat"]);
 
     repo.cmd()
         .args(["wt", "unarchive", "feat"])
@@ -1011,29 +1321,12 @@ fn clone_scaffolds_default_branch_workstream() {
     let tmp = tempfile::tempdir().unwrap();
     let src = tmp.path().join("src");
 
-    let git_env = [
-        ("GIT_AUTHOR_NAME", "Test"),
-        ("GIT_AUTHOR_EMAIL", "test@example.com"),
-        ("GIT_COMMITTER_NAME", "Test"),
-        ("GIT_COMMITTER_EMAIL", "test@example.com"),
-    ];
-    std::process::Command::new("git")
-        .args(["init", "-b", "main", src.to_str().unwrap()])
-        .envs(git_env.iter().cloned())
-        .status()
-        .expect("git init");
-    std::process::Command::new("git")
-        .args(["commit", "--allow-empty", "-m", "init"])
-        .current_dir(&src)
-        .envs(git_env.iter().cloned())
-        .status()
-        .expect("git commit");
+    git_in(tmp.path(), &["init", "-b", "main", src.to_str().unwrap()]);
+    git_in(&src, &["commit", "--allow-empty", "-m", "init"]);
 
-    assert_cmd::Command::cargo_bin("flowy")
-        .unwrap()
+    common::flowy()
         .current_dir(tmp.path())
         .args(["clone", src.to_str().unwrap(), "project"])
-        .envs(git_env.iter().cloned())
         .assert()
         .success();
 
@@ -1053,33 +1346,58 @@ fn clone_scaffolds_default_branch_workstream() {
 }
 
 #[test]
+fn clone_tracks_origin_branches() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    git_in(tmp.path(), &["init", "-b", "main", src.to_str().unwrap()]);
+    git_in(&src, &["commit", "--allow-empty", "-m", "init"]);
+
+    common::flowy()
+        .current_dir(tmp.path())
+        .args(["clone", src.to_str().unwrap(), "project"])
+        .assert()
+        .success();
+    let project = tmp.path().join("project");
+    let main_wt = project.join("worktrees").join("main");
+    assert_eq!(
+        git_out(&main_wt, &["rev-parse", "--abbrev-ref", "main@{upstream}"]).trim(),
+        "origin/main"
+    );
+
+    // A branch pushed after the clone arrives with a fetch, and `wt new` checks
+    // it out rather than branching fresh from HEAD.
+    git_in(&src, &["checkout", "-q", "-b", "later"]);
+    git_in(&src, &["commit", "--allow-empty", "-m", "later work"]);
+    git_in(&project, &["fetch", "--quiet", "origin"]);
+    common::flowy()
+        .arg("--repo-root")
+        .arg(&project)
+        .args(["wt", "new", "-b", "later"])
+        .assert()
+        .success();
+
+    let later_wt = project.join("worktrees").join("later");
+    assert_eq!(
+        git_out(&later_wt, &["rev-parse", "HEAD"]),
+        git_out(&src, &["rev-parse", "HEAD"])
+    );
+    assert_eq!(
+        git_out(&later_wt, &["rev-parse", "--abbrev-ref", "@{upstream}"]).trim(),
+        "origin/later"
+    );
+}
+
+#[test]
 fn clone_scaffolds_non_main_default_branch() {
     let tmp = tempfile::tempdir().unwrap();
     let src = tmp.path().join("src");
 
-    let git_env = [
-        ("GIT_AUTHOR_NAME", "Test"),
-        ("GIT_AUTHOR_EMAIL", "test@example.com"),
-        ("GIT_COMMITTER_NAME", "Test"),
-        ("GIT_COMMITTER_EMAIL", "test@example.com"),
-    ];
-    std::process::Command::new("git")
-        .args(["init", "-b", "trunk", src.to_str().unwrap()])
-        .envs(git_env.iter().cloned())
-        .status()
-        .expect("git init");
-    std::process::Command::new("git")
-        .args(["commit", "--allow-empty", "-m", "init"])
-        .current_dir(&src)
-        .envs(git_env.iter().cloned())
-        .status()
-        .expect("git commit");
+    git_in(tmp.path(), &["init", "-b", "trunk", src.to_str().unwrap()]);
+    git_in(&src, &["commit", "--allow-empty", "-m", "init"]);
 
-    assert_cmd::Command::cargo_bin("flowy")
-        .unwrap()
+    common::flowy()
         .current_dir(tmp.path())
         .args(["clone", src.to_str().unwrap(), "project"])
-        .envs(git_env.iter().cloned())
         .assert()
         .success();
 
@@ -1204,7 +1522,23 @@ fn wt_rename_json() {
 // submodules, so rename must fall back to a manual move + admin repair.
 #[test]
 fn wt_rename_moves_worktree_with_submodule() {
+    rename_worktree_with_submodule(false);
+}
+
+// git 2.48+ can write the worktree's gitdir pointers relative to each other.
+#[test]
+fn wt_rename_moves_worktree_with_submodule_and_relative_paths() {
+    rename_worktree_with_submodule(true);
+}
+
+fn rename_worktree_with_submodule(relative_paths: bool) {
     let repo = TestRepo::new();
+    if relative_paths {
+        git_in(
+            &repo.root.join(".bare"),
+            &["config", "worktree.useRelativePaths", "true"],
+        );
+    }
 
     repo.cmd()
         .args(["wt", "new", "-b", "feat/sub"])
@@ -1231,22 +1565,24 @@ fn wt_rename_moves_worktree_with_submodule() {
         ],
     );
     git_in(&old_wt, &["commit", "-m", "add submodule"]);
+    std::fs::write(old_wt.join("sub").join("wip.txt"), "unsaved\n").unwrap();
 
-    // Propagate the same allowance to the tool's own `submodule update`.
     repo.cmd()
-        .env("GIT_CONFIG_COUNT", "1")
-        .env("GIT_CONFIG_KEY_0", "protocol.file.allow")
-        .env("GIT_CONFIG_VALUE_0", "always")
         .args(["wt", "rename", "feat-sub", "feat/renamed"])
         .assert()
         .success();
 
     let new_wt = repo.root.join("worktrees").join("feat-renamed");
     assert!(!old_wt.exists(), "old worktree dir should be gone");
-    assert!(
-        new_wt.join("sub").join(".git").exists(),
-        "submodule should be restored at the new path"
+    assert_eq!(
+        std::fs::read_to_string(new_wt.join("sub").join("wip.txt")).unwrap(),
+        "unsaved\n",
+        "untracked submodule work should move with the worktree"
     );
+
+    // The submodule's core.worktree follows the move.
+    let sub_status = git_out(&new_wt.join("sub"), &["status", "--porcelain"]);
+    assert_eq!(sub_status.trim(), "?? wip.txt");
 
     // git tracks the worktree at its new path only.
     let list = git_out(&repo.root, &["worktree", "list", "--porcelain"]);
@@ -1266,6 +1602,25 @@ fn wt_rename_moves_worktree_with_submodule() {
             .branch,
         "feat/renamed"
     );
+}
+
+#[test]
+fn wt_rename_honors_a_worktree_lock() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat/locked"])
+        .assert()
+        .success();
+    let old_wt = repo.root.join("worktrees").join("feat-locked");
+    git_in(&old_wt, &["worktree", "lock", old_wt.to_str().unwrap()]);
+
+    repo.cmd()
+        .args(["wt", "rename", "feat-locked", "feat/moved"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("locked"));
+    assert!(old_wt.exists());
+    assert!(!repo.root.join("worktrees").join("feat-moved").exists());
 }
 
 #[test]
@@ -1370,6 +1725,37 @@ fn migrate_reports_notes_without_a_worktree() {
         .stdout(predicate::str::contains("orphaned orphan"));
 
     assert!(old.is_dir(), "orphaned notes must be left alone");
+}
+
+#[test]
+fn migrate_reports_a_workstream_started_before_migrating() {
+    let repo = TestRepo::new();
+    let old = seed_old_layout(&repo.root, "legacy", true);
+    repo.cmd()
+        .args(["t", "add", "-w", "legacy", "Filed too early"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .arg("migrate")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("conflict legacy"));
+
+    assert!(
+        old.join("tickets").join("001.md").exists(),
+        "old notes stay put"
+    );
+    let json: serde_json::Value = serde_json::from_slice(
+        &repo
+            .cmd()
+            .args(["--json", "migrate"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(json["workstreams"][0]["outcome"], "conflict");
 }
 
 #[test]
@@ -1550,6 +1936,7 @@ fn t_add_concurrent_adds_get_distinct_numbers() {
     let children: Vec<_> = (0..N)
         .map(|i| {
             std::process::Command::new(env!("CARGO_BIN_EXE_flowy"))
+                .envs(common::GIT_ENV)
                 .arg("--repo-root")
                 .arg(&repo.root)
                 .args(["t", "add", "-w", "test-branch", &format!("Ticket {i}")])
@@ -1795,22 +2182,21 @@ fn notes_write_rejects_paths_outside_the_workstream() {
     let repo = TestRepo::new();
     new_workstream(&repo, "test/branch");
 
-    for name in ["../escaped.md", "/tmp/flowy-escaped.md"] {
+    let outside = tempfile::TempDir::new().unwrap();
+    let absolute = outside.path().join("escaped.md");
+    let relative = repo.ws_dir("test-branch").join("..").join("escaped.md");
+    for (name, target) in [
+        ("../escaped.md", &relative),
+        (absolute.to_str().unwrap(), &absolute),
+    ] {
         repo.cmd()
             .args(["notes", "write", "-w", "test-branch", name])
             .write_stdin("nope\n")
             .assert()
             .failure()
             .stderr(predicate::str::contains("inside the workstream"));
+        assert!(!target.exists(), "{name} was written");
     }
-
-    assert!(
-        !repo
-            .ws_dir("test-branch")
-            .join("..")
-            .join("escaped.md")
-            .exists()
-    );
 }
 
 #[test]
@@ -2199,4 +2585,95 @@ fn t_priority_preserves_an_existing_ticket_body() {
     assert!(content.contains("title = \"Titled\""));
     assert!(content.contains("status = \"pending\""));
     assert!(content.contains("Some details"));
+}
+
+#[test]
+fn workstream_name_rejects_dot_components() {
+    let repo = TestRepo::new();
+    for bad in [".", ".."] {
+        repo.cmd()
+            .args(["t", "ls", "-w", bad])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("not a valid workstream name"));
+        repo.cmd().args(["wt", "archive", bad]).assert().failure();
+    }
+}
+
+#[test]
+fn wt_new_reports_safe_name_collision() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "a/b"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["wt", "new", "-b", "a-b"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("maps to workstream 'a-b'"));
+}
+
+#[test]
+fn t_edit_runs_editor_with_arguments() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "test/branch"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["t", "add", "-w", "test-branch", "My ticket"])
+        .assert()
+        .success();
+
+    repo.cmd()
+        .args(["t", "edit", "-w", "test-branch", "1"])
+        .env("EDITOR", "perl -pi -e s/My/Your/")
+        .assert()
+        .success();
+
+    let ticket = ws_dir_in(&repo.root, "test-branch")
+        .join("tickets")
+        .join("001.md");
+    assert!(fs::read_to_string(ticket).unwrap().contains("Your ticket"));
+}
+
+#[test]
+fn ticket_flags_reject_bad_combinations() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["t", "ls", "--status", "bogus"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid value 'bogus'"));
+    repo.cmd()
+        .args(["t", "done", "1", "--reopen", "--wont-implement"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
+#[test]
+fn wt_new_refuses_start_point_for_existing_branch() {
+    let repo = TestRepo::new();
+    git_in(&repo.root.join(".bare"), &["branch", "existing", "main"]);
+    repo.cmd()
+        .args(["wt", "new", "-b", "existing", "main"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already exists"));
+    assert!(!repo.root.join("worktrees").join("existing").exists());
+}
+
+#[test]
+fn clone_refuses_an_existing_target() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir(tmp.path().join("project")).unwrap();
+    common::flowy()
+        .current_dir(tmp.path())
+        .args(["clone", "https://example.invalid/repo.git", "project"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("'project' already exists"));
+    assert!(!tmp.path().join("project").join(".bare").exists());
 }

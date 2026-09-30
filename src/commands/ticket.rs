@@ -1,21 +1,21 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use clap::ArgMatches;
 use comfy_table::{Cell, Color, ContentArrangement, Table};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use owo_colors::OwoColorize;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-use super::{get_repo_root, read_body_file, resolve_workstream};
+use super::{get_repo_root, open_in_editor, read_body_file, resolve_workstream, warn_skipped};
 use crate::core::{
+    atomic::write_atomic,
     meta::read_meta,
     names::workstream_dir,
     notes::append_log,
     repo::{cwd_worktree, worktrees_dir},
     ticket::{
-        Priority, Status, Ticket, append_journal, create_ticket, load_tickets, resolve_ticket,
-        rewrite_status_and_append, ticket_path, write_priority,
+        Priority, Status, Ticket, append_journal, create_ticket, load_tickets,
+        load_tickets_lenient, resolve_ticket, rewrite_status_and_append, write_priority,
     },
 };
 use crate::output::print_json;
@@ -154,17 +154,7 @@ fn list(matches: &ArgMatches) -> Result<()> {
     if let Some((ws_name, ws_dir)) = single_ws {
         let tickets = filter_by_priority(filter_tickets(load_tickets(&ws_dir)?, filter), priority);
         if json {
-            let val: Vec<serde_json::Value> = tickets
-                .iter()
-                .map(|t| {
-                    serde_json::json!({
-                        "number": t.number,
-                        "title": t.title,
-                        "status": t.status,
-                        "priority": t.priority,
-                    })
-                })
-                .collect();
+            let val: Vec<serde_json::Value> = tickets.iter().map(ticket_json).collect();
             return print_json(&val);
         }
         print_ticket_table(&ws_name, &tickets);
@@ -173,10 +163,9 @@ fn list(matches: &ArgMatches) -> Result<()> {
         let mut groups: Vec<(String, Vec<Ticket>)> = Vec::new();
 
         for (name, dir) in live_workstreams(&root) {
-            let tickets = filter_by_priority(
-                filter_tickets(load_tickets(&dir).unwrap_or_default(), filter),
-                priority,
-            );
+            let (tickets, errors) = load_tickets_lenient(&dir);
+            warn_skipped(&name, &errors);
+            let tickets = filter_by_priority(filter_tickets(tickets, filter), priority);
             if !tickets.is_empty() {
                 groups.push((name, tickets));
             }
@@ -187,13 +176,9 @@ fn list(matches: &ArgMatches) -> Result<()> {
                 .iter()
                 .flat_map(|(ws, tickets)| {
                     tickets.iter().map(move |t| {
-                        serde_json::json!({
-                            "workstream": ws,
-                            "number": t.number,
-                            "title": t.title,
-                            "status": t.status,
-                            "priority": t.priority,
-                        })
+                        let mut val = ticket_json(t);
+                        val["workstream"] = ws.as_str().into();
+                        val
                     })
                 })
                 .collect();
@@ -210,6 +195,15 @@ fn list(matches: &ArgMatches) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn ticket_json(t: &Ticket) -> serde_json::Value {
+    serde_json::json!({
+        "number": t.number,
+        "title": t.title,
+        "status": t.status,
+        "priority": t.priority,
+    })
 }
 
 fn render_ticket_content(content: &str) {
@@ -281,40 +275,32 @@ fn done(matches: &ArgMatches) -> Result<()> {
     let json = matches.get_flag("json");
     let id = matches.get_one::<String>("id").unwrap();
     let summary = body_arg(matches, "summary")?;
-    let wont_impl = matches.get_flag("wont-implement");
-    let reopen = matches.get_flag("reopen");
+    let status = if matches.get_flag("reopen") {
+        Status::Pending
+    } else if matches.get_flag("wont-implement") {
+        Status::WontImplement
+    } else {
+        Status::Complete
+    };
 
     let (_, ws_dir) = resolve_workstream(matches, &root)?;
     let tickets = load_tickets(&ws_dir)?;
     let ticket = resolve_ticket(&tickets, id)?;
 
-    let path = ticket_path(&ws_dir, ticket.number);
+    let path = &ticket.path;
     let content =
-        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
 
-    let new_content = rewrite_status_and_append(&content, reopen, wont_impl, summary.as_deref());
-    std::fs::write(&path, &new_content).with_context(|| format!("writing {}", path.display()))?;
+    let new_content = rewrite_status_and_append(&content, status, summary.as_deref());
+    write_atomic(path, &new_content).with_context(|| format!("writing {}", path.display()))?;
 
-    let action = if reopen {
-        "reopen"
-    } else if wont_impl {
-        "wont-implement"
-    } else {
-        "done"
-    };
+    let action = status.verb();
     append_log(&ws_dir, &format!("{action} {:03}", ticket.number))?;
 
     if json {
-        let status_str = if reopen {
-            "pending"
-        } else if wont_impl {
-            "wont-implement"
-        } else {
-            "complete"
-        };
         return print_json(&serde_json::json!({
             "number": ticket.number,
-            "status": status_str,
+            "status": status,
         }));
     }
     println!("{action} {:03}", ticket.number);
@@ -331,7 +317,7 @@ fn priority(matches: &ArgMatches) -> Result<()> {
     let tickets = load_tickets(&ws_dir)?;
     let ticket = resolve_ticket(&tickets, id)?;
 
-    write_priority(&ticket_path(&ws_dir, ticket.number), level)?;
+    write_priority(&ticket.path, level)?;
     append_log(
         &ws_dir,
         &format!("priority {:03} {}", ticket.number, level.as_str()),
@@ -359,12 +345,12 @@ fn journal(matches: &ArgMatches) -> Result<()> {
     let tickets = load_tickets(&ws_dir)?;
     let ticket = resolve_ticket(&tickets, id)?;
 
-    let path = ticket_path(&ws_dir, ticket.number);
+    let path = &ticket.path;
     let content =
-        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
 
     let (content, ts) = append_journal(&content, &text, heading.map(String::as_str));
-    std::fs::write(&path, &content).with_context(|| format!("writing {}", path.display()))?;
+    write_atomic(path, &content).with_context(|| format!("writing {}", path.display()))?;
 
     if json {
         return print_json(&serde_json::json!({
@@ -384,18 +370,9 @@ fn edit(matches: &ArgMatches) -> Result<()> {
     let tickets = load_tickets(&ws_dir)?;
     let ticket = resolve_ticket(&tickets, id)?;
 
-    let path = ticket_path(&ws_dir, ticket.number);
+    let path = &ticket.path;
     let editor = std::env::var("EDITOR").context("$EDITOR is not set")?;
-
-    let status = Command::new(&editor)
-        .arg(&path)
-        .status()
-        .with_context(|| format!("running {editor}"))?;
-    if !status.success() {
-        bail!("editor exited with non-zero status");
-    }
-
-    Ok(())
+    open_in_editor(&editor, path)
 }
 
 struct SearchTicket {
@@ -421,7 +398,9 @@ fn collect_search_tickets(matches: &ArgMatches, root: &Path) -> Result<Vec<Searc
 
     let mut result = Vec::new();
     for (name, dir) in live_workstreams(root) {
-        for t in load_tickets(&dir).unwrap_or_default() {
+        let (tickets, errors) = load_tickets_lenient(&dir);
+        warn_skipped(&name, &errors);
+        for t in tickets {
             result.push(SearchTicket {
                 workstream: name.clone(),
                 number: t.number,
@@ -576,6 +555,21 @@ fn interactive_search(tickets: &[SearchTicket]) -> Result<Option<(String, u32, S
     }
 }
 
+fn print_search_json(results: &[(&SearchTicket, u32)]) -> Result<()> {
+    let val: Vec<serde_json::Value> = results
+        .iter()
+        .map(|(t, score)| {
+            serde_json::json!({
+                "workstream": t.workstream,
+                "number": t.number,
+                "title": t.title,
+                "score": score,
+            })
+        })
+        .collect();
+    print_json(&val)
+}
+
 fn search(matches: &ArgMatches) -> Result<()> {
     use std::io::IsTerminal;
 
@@ -590,18 +584,7 @@ fn search(matches: &ArgMatches) -> Result<()> {
         let q = query.ok_or_else(|| anyhow::anyhow!("query required in pipe mode"))?;
         let results = score_tickets(&tickets, q);
         if json {
-            let val: Vec<serde_json::Value> = results
-                .iter()
-                .map(|(t, score)| {
-                    serde_json::json!({
-                        "workstream": t.workstream,
-                        "number": t.number,
-                        "title": t.title,
-                        "score": score,
-                    })
-                })
-                .collect();
-            return print_json(&val);
+            return print_search_json(&results);
         }
         for (t, _) in &results {
             println!("{:03} {} ({})", t.number, t.title, t.workstream);
@@ -612,18 +595,7 @@ fn search(matches: &ArgMatches) -> Result<()> {
     if let Some(q) = query {
         let results = score_tickets(&tickets, q);
         if json {
-            let val: Vec<serde_json::Value> = results
-                .iter()
-                .map(|(t, score)| {
-                    serde_json::json!({
-                        "workstream": t.workstream,
-                        "number": t.number,
-                        "title": t.title,
-                        "score": score,
-                    })
-                })
-                .collect();
-            return print_json(&val);
+            return print_search_json(&results);
         }
         if results.is_empty() {
             println!("No matches.");
@@ -652,7 +624,8 @@ fn status(matches: &ArgMatches) -> Result<()> {
         .map(|m| m.worktree.branch)
         .unwrap_or_else(|| ws_name.clone());
 
-    let tickets = load_tickets(&ws_dir).unwrap_or_default();
+    let (tickets, errors) = load_tickets_lenient(&ws_dir);
+    warn_skipped(&ws_name, &errors);
     let pending = tickets
         .iter()
         .filter(|t| t.status == Status::Pending)
@@ -690,6 +663,7 @@ mod tests {
             status,
             priority,
             content: String::new(),
+            path: PathBuf::new(),
         }
     }
 

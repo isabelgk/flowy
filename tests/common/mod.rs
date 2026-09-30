@@ -6,13 +6,26 @@ use std::path::{Path, PathBuf};
 use std::process;
 use tempfile::TempDir;
 
-/// Hermetic git identity so tests don't require the developer's git config.
-pub const GIT_ENV: [(&str, &str); 4] = [
+/// Hermetic git environment: a fixed identity, and none of the developer's
+/// global or system config (commit.gpgsign, core.hooksPath) or default global
+/// ignore file, which git finds through HOME and XDG_CONFIG_HOME.
+pub const GIT_ENV: [(&str, &str); 8] = [
     ("GIT_AUTHOR_NAME", "Test"),
     ("GIT_AUTHOR_EMAIL", "test@example.com"),
     ("GIT_COMMITTER_NAME", "Test"),
     ("GIT_COMMITTER_EMAIL", "test@example.com"),
+    ("GIT_CONFIG_GLOBAL", "/dev/null"),
+    ("GIT_CONFIG_NOSYSTEM", "1"),
+    ("HOME", "/nonexistent"),
+    ("XDG_CONFIG_HOME", "/nonexistent"),
 ];
+
+/// The flowy binary with the hermetic git environment.
+pub fn flowy() -> Command {
+    let mut c = Command::cargo_bin("flowy").expect("flowy binary");
+    c.envs(GIT_ENV);
+    c
+}
 
 /// Run git in `dir` with the hermetic identity, asserting success.
 pub fn git_in(dir: &Path, args: &[&str]) {
@@ -109,13 +122,8 @@ impl TestRepo {
     }
 
     pub fn cmd(&self) -> Command {
-        let mut c = Command::cargo_bin("flowy").expect("flowy binary");
+        let mut c = flowy();
         c.arg("--repo-root").arg(&self.root);
-        // Hermetic git identity for any git operations the command triggers.
-        c.env("GIT_AUTHOR_NAME", "Test")
-            .env("GIT_AUTHOR_EMAIL", "test@example.com")
-            .env("GIT_COMMITTER_NAME", "Test")
-            .env("GIT_COMMITTER_EMAIL", "test@example.com");
         c
     }
 }

@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::core::{
-    names::{safe_name, workstream_dir},
-    repo::{cwd_worktree, find_repo_root},
+    names::{archived_workstream_dir, safe_name, workstream_subdir},
+    repo::{cwd_worktree, find_repo_root, worktrees_dir},
 };
 
 pub fn dispatch(matches: ArgMatches) -> Result<()> {
@@ -33,11 +33,7 @@ pub fn dispatch(matches: ArgMatches) -> Result<()> {
             )
         }
         Some(("tui", _)) | None => {
-            let root = if let Some(p) = matches.get_one::<String>("repo-root") {
-                PathBuf::from(p)
-            } else {
-                find_repo_root()?
-            };
+            let root = get_repo_root(&matches)?;
             crate::tui::run(&root)
         }
         Some(("completions", sub)) => {
@@ -65,25 +61,55 @@ pub fn get_repo_root(matches: &ArgMatches) -> Result<PathBuf> {
 // Resolve workstream name from -w flag, the worktree cwd sits in, or the current
 // git branch. The cwd takes precedence over the branch because a renamed branch
 // no longer names its own worktree directory, and the branch-derived path would
-// point at a directory that does not exist.
+// point at a directory that does not exist. The directory is the live worktree's
+// notes if there is one, else the archived notes; a name with neither is an
+// error, since writing there would create a stray `worktrees/<name>/`.
 pub fn resolve_workstream(matches: &ArgMatches, root: &Path) -> Result<(String, PathBuf)> {
     let name = if let Some(n) = matches.get_one::<String>("workstream") {
-        safe_name(n)
+        n.clone()
     } else if let Some(name) = cwd_worktree(root) {
         name
     } else {
+        // Asked of the repo root rather than the process cwd, which can be any
+        // other repository when --repo-root is given.
         let out = Command::new("git")
             .args(["branch", "--show-current"])
+            .current_dir(root)
             .output()
             .context("running git branch --show-current")?;
+        if !out.status.success() {
+            bail!(
+                "cannot infer workstream: git branch --show-current failed in {}: {}; use -w NAME",
+                root.display(),
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
         let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
         if branch.is_empty() {
             bail!("detached HEAD - cannot infer workstream; use -w NAME");
         }
         safe_name(&branch)
     };
-    let dir = workstream_dir(root, &name);
-    Ok((name, dir))
+    let worktree = worktrees_dir(root).join(&name);
+    if worktree.is_dir() {
+        return Ok((name, workstream_subdir(&worktree)));
+    }
+    let archived = archived_workstream_dir(root, &name);
+    if archived.is_dir() {
+        return Ok((name, archived));
+    }
+    bail!(
+        "no workstream named '{name}': no worktree at {} and none archived",
+        worktree.display()
+    )
+}
+
+// A broken ticket is reported rather than allowed to hide the rest of its
+// workstream from a view that spans many tickets.
+pub fn warn_skipped(workstream: &str, errors: &[anyhow::Error]) {
+    for e in errors {
+        eprintln!("warning: {workstream}: skipped {e:#}");
+    }
 }
 
 // Prose passed on the command line has to survive the shell's quoting rules,
@@ -94,6 +120,22 @@ pub fn read_body_file(path: &str) -> Result<String> {
         return read_stdin();
     }
     std::fs::read_to_string(path).with_context(|| format!("reading {path}"))
+}
+
+// $EDITOR is a shell command line, not a program name (`code -w`, `emacsclient
+// -t`), so it goes through sh the way git runs it.
+pub fn open_in_editor(editor: &str, path: &Path) -> Result<()> {
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg(format!("{editor} \"$@\""))
+        .arg(editor)
+        .arg(path)
+        .status()
+        .with_context(|| format!("running {editor}"))?;
+    if !status.success() {
+        bail!("editor '{editor}' exited with {status}");
+    }
+    Ok(())
 }
 
 pub fn read_stdin() -> Result<String> {

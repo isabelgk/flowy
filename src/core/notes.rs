@@ -1,3 +1,4 @@
+use crate::core::atomic::write_atomic;
 use anyhow::{Context, Result, bail};
 use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
@@ -26,8 +27,15 @@ pub struct Milestone {
 
 // status.md is an append-only log written by every command that changes a
 // workstream, so the entry format lives here rather than at each call site.
+// Each entry is one bullet on one line, so a multi-line entry is joined with spaces.
 pub fn append_log(ws_dir: &Path, entry: &str) -> Result<()> {
     let path = ws_dir.join("status.md");
+    let entry = entry
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
     let line = format!(
         "- {} {entry}\n",
         chrono::Utc::now().format("%Y-%m-%dT%H:%MZ")
@@ -65,7 +73,7 @@ pub fn write_note(path: &Path, body: &str) -> Result<()> {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating {}", parent.display()))?;
     }
-    std::fs::write(path, &body).with_context(|| format!("writing {}", path.display()))
+    write_atomic(path, &body).with_context(|| format!("writing {}", path.display()))
 }
 
 pub fn append_note(path: &Path, body: &str) -> Result<()> {
@@ -186,6 +194,15 @@ pub fn freeze_milestone(ws_dir: &Path, slug: &str) -> Result<Milestone> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn append_log_keeps_an_entry_on_one_line() {
+        let dir = tempfile::tempdir().unwrap();
+        append_log(dir.path(), "  first\n\n  second  \n").unwrap();
+        let log = std::fs::read_to_string(dir.path().join("status.md")).unwrap();
+        assert_eq!(log.lines().count(), 1);
+        assert!(log.ends_with(" first second\n"), "{log:?}");
+    }
 
     #[test]
     fn resolve_note_expands_aliases() {

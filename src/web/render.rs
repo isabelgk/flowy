@@ -1,5 +1,5 @@
 use maud::{DOCTYPE, Markup, PreEscaped, html};
-use pulldown_cmark::{Event, Options, Parser};
+use pulldown_cmark::{CowStr, Event, Options, Parser, Tag};
 
 use crate::commands::worktree::{WorktreeInfo, format_age};
 use crate::core::ticket::{Priority, Status, Ticket};
@@ -11,6 +11,22 @@ const SCRIPT: &str = include_str!("script.js");
 // is collapsed in the first paint instead of flashing open on every navigation.
 const RESTORE_NAV: &str = "try{if(localStorage.getItem('flowy-nav')==='closed')\
      document.documentElement.classList.add('nav-collapsed')}catch(e){}";
+
+// Everything but the unreserved characters is escaped, so a branch like `fix#1`
+// or one with an accent survives as a single path segment and a valid header.
+const SEGMENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
+// The URL of a workstream's page, with the name percent-encoded.
+pub fn ws_url(name: &str) -> String {
+    format!(
+        "/w/{}",
+        percent_encoding::utf8_percent_encode(name, SEGMENT)
+    )
+}
 
 pub struct Nav {
     pub workstreams: Vec<WorktreeInfo>,
@@ -29,12 +45,52 @@ pub fn markdown(src: &str) -> Markup {
     let events = Parser::new_ext(src, options).map(|event| match event {
         Event::Html(raw) => Event::Text(raw),
         Event::InlineHtml(raw) => Event::Text(raw),
+        Event::Start(Tag::Link {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) => Event::Start(Tag::Link {
+            link_type,
+            dest_url: safe_url(dest_url),
+            title,
+            id,
+        }),
+        Event::Start(Tag::Image {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) => Event::Start(Tag::Image {
+            link_type,
+            dest_url: safe_url(dest_url),
+            title,
+            id,
+        }),
         other => other,
     });
 
     let mut out = String::new();
     pulldown_cmark::html::push_html(&mut out, events);
     PreEscaped(out)
+}
+
+// pulldown-cmark passes any scheme through, and a `javascript:` link runs with
+// this origin's access to the mutating endpoints. Browsers ignore whitespace and
+// control characters inside a scheme, so those are dropped before comparing.
+fn safe_url(url: CowStr<'_>) -> CowStr<'_> {
+    let cleaned: String = url
+        .chars()
+        .filter(|c| !c.is_ascii_control() && !c.is_ascii_whitespace())
+        .collect();
+    let allowed = match cleaned.find([':', '/', '?', '#']) {
+        Some(i) if cleaned[i..].starts_with(':') => matches!(
+            cleaned[..i].to_ascii_lowercase().as_str(),
+            "http" | "https" | "mailto"
+        ),
+        _ => true,
+    };
+    if allowed { url } else { CowStr::Borrowed("#") }
 }
 
 pub fn page(title: &str, nav: &Nav, content: Markup) -> Markup {
@@ -67,7 +123,7 @@ pub fn page(title: &str, nav: &Nav, content: Markup) -> Markup {
                         ul {
                             @for ws in &nav.workstreams {
                                 li {
-                                    a href={ "/w/" (ws.name) }
+                                    a href={ (ws_url(&ws.name)) }
                                       class=@if nav.active.as_deref() == Some(ws.name.as_str()) { "active" } @else { "" } {
                                         span.ws-name { (ws.name) }
                                         span.ws-meta {
@@ -120,7 +176,7 @@ pub struct Filters<'a> {
 
 pub fn ticket_list(nav: &Nav, workstream: &str, tickets: &[Ticket], filters: &Filters) -> Markup {
     let content = html! {
-        form.filters method="get" action={ "/w/" (workstream) } {
+        form.filters method="get" action={ (ws_url(workstream)) } {
             label { "Status"
                 select name="status" {
                     @for (value, label) in [("open", "Open"), ("all", "All"), ("complete", "Done"), ("wont-implement", "Won't implement")] {
@@ -150,8 +206,8 @@ pub fn ticket_list(nav: &Nav, workstream: &str, tickets: &[Ticket], filters: &Fi
                 tbody {
                     @for t in tickets {
                         tr {
-                            td.num { a href={ "/w/" (workstream) "/t/" (t.number) } { (format!("{:03}", t.number)) } }
-                            td { a href={ "/w/" (workstream) "/t/" (t.number) } { (t.title) } }
+                            td.num { a href={ (ws_url(workstream)) "/t/" (t.number) } { (format!("{:03}", t.number)) } }
+                            td { a href={ (ws_url(workstream)) "/t/" (t.number) } { (t.title) } }
                             td { span class=(priority_class(t.priority)) { (t.priority.as_str()) } }
                             td { span class=(status_class(&t.status)) { (status_label(&t.status)) } }
                         }
@@ -162,7 +218,7 @@ pub fn ticket_list(nav: &Nav, workstream: &str, tickets: &[Ticket], filters: &Fi
 
         details.card {
             summary { "New ticket" }
-            form method="post" action={ "/w/" (workstream) "/tickets" } {
+            form method="post" action={ (ws_url(workstream)) "/tickets" } {
                 label { "Title"
                     input type="text" name="title" required;
                 }
@@ -182,16 +238,16 @@ pub fn ticket_list(nav: &Nav, workstream: &str, tickets: &[Ticket], filters: &Fi
 
         p.notes {
             "Notes: "
-            a href={ "/w/" (workstream) "/notes/planning" } { "planning" } " - "
-            a href={ "/w/" (workstream) "/notes/next" } { "next" } " - "
-            a href={ "/w/" (workstream) "/notes/status" } { "status" }
+            a href={ (ws_url(workstream)) "/notes/planning" } { "planning" } " - "
+            a href={ (ws_url(workstream)) "/notes/next" } { "next" } " - "
+            a href={ (ws_url(workstream)) "/notes/status" } { "status" }
         }
     };
     page(workstream, nav, content)
 }
 
 pub fn ticket_detail(nav: &Nav, workstream: &str, ticket: &Ticket) -> Markup {
-    let base = format!("/w/{workstream}/t/{}", ticket.number);
+    let base = format!("{}/t/{}", ws_url(workstream), ticket.number);
     let content = html! {
         .card {
             .ticket-head {
@@ -242,7 +298,7 @@ pub fn ticket_detail(nav: &Nav, workstream: &str, ticket: &Ticket) -> Markup {
             }
         }
 
-        p { a href={ "/w/" (workstream) } { "Back to " (workstream) } }
+        p { a href={ (ws_url(workstream)) } { "Back to " (workstream) } }
     };
     page(
         &format!("{:03} {}", ticket.number, ticket.title),
@@ -258,7 +314,7 @@ pub fn ticket_edit(
     base_hash: &str,
     conflict: bool,
 ) -> Markup {
-    let action = format!("/w/{workstream}/t/{}/body", ticket.number);
+    let action = format!("{}/t/{}/body", ws_url(workstream), ticket.number);
     let content = html! {
         .card {
             h1 { "Edit " (format!("{:03}", ticket.number)) " " (ticket.title) }
@@ -274,7 +330,7 @@ pub fn ticket_edit(
                 textarea.editor name="body" rows="28" { (ticket.content) }
                 .row {
                     button type="submit" { "Save" }
-                    a.button href={ "/w/" (workstream) "/t/" (ticket.number) } { "Cancel" }
+                    a.button href={ (ws_url(workstream)) "/t/" (ticket.number) } { "Cancel" }
                 }
             }
         }
@@ -291,8 +347,44 @@ pub fn note(nav: &Nav, workstream: &str, name: &str, body: &str, as_markdown: bo
             } @else {
                 pre { (body) }
             }
-            p { a href={ "/w/" (workstream) } { "Back to " (workstream) } }
+            p { a href={ (ws_url(workstream)) } { "Back to " (workstream) } }
         }
     };
     page(name, nav, content)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn markdown_neutralizes_script_links() {
+        for src in [
+            "[x](javascript:alert(1))",
+            "<javascript:alert(1)>",
+            "[x](JavaScript&#58;alert(1))",
+            "[x](<java\tscript:alert(1)>)",
+            "![x](data:text/html,hi)",
+        ] {
+            let html = markdown(src).into_string();
+            assert!(
+                html.contains("href=\"#\"") || html.contains("src=\"#\""),
+                "{src}: {html}"
+            );
+        }
+    }
+
+    #[test]
+    fn markdown_keeps_ordinary_links() {
+        for (src, href) in [
+            ("[x](https://example.com)", "https://example.com"),
+            ("[x](mailto:a@b.c)", "mailto:a@b.c"),
+            ("[x](../notes/planning)", "../notes/planning"),
+            ("[x](#journal)", "#journal"),
+            ("[x](a/b:c)", "a/b:c"),
+        ] {
+            let html = markdown(src).into_string();
+            assert!(html.contains(&format!("href=\"{href}\"")), "{src}: {html}");
+        }
+    }
 }

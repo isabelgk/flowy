@@ -3,13 +3,13 @@ use clap::ArgMatches;
 use owo_colors::OwoColorize;
 use std::path::Path;
 
-use super::{get_repo_root, read_body_file, read_stdin, resolve_workstream};
+use super::{get_repo_root, read_body_file, read_stdin, resolve_workstream, warn_skipped};
 use crate::core::{
     notes::{
         WELL_KNOWN, append_log, append_note, freeze_milestone, milestones_dir, resolve_note,
         write_note,
     },
-    ticket::{Status, load_tickets},
+    ticket::{Status, load_tickets_lenient},
 };
 use crate::output::print_json;
 
@@ -161,7 +161,7 @@ fn log(matches: &ArgMatches) -> Result<()> {
     if !ws_dir.is_dir() {
         bail!("no workstream at {}", ws_dir.display());
     }
-    append_log(&ws_dir, text.trim())?;
+    append_log(&ws_dir, text)?;
 
     let path = ws_dir.join("status.md");
     if json {
@@ -175,13 +175,14 @@ fn milestone(matches: &ArgMatches) -> Result<()> {
     let root = get_repo_root(matches)?;
     let json = matches.get_flag("json");
     let slug = matches.get_one::<String>("slug").unwrap();
-    let (_, ws_dir) = resolve_workstream(matches, &root)?;
+    let (ws_name, ws_dir) = resolve_workstream(matches, &root)?;
 
     // Reported rather than refused: whether an open ticket belongs to this
     // milestone or the next one is a judgement the caller has to make, but a
     // milestone frozen over a live queue is worth noticing.
-    let pending = load_tickets(&ws_dir)
-        .unwrap_or_default()
+    let (tickets, errors) = load_tickets_lenient(&ws_dir);
+    warn_skipped(&ws_name, &errors);
+    let pending = tickets
         .iter()
         .filter(|t| t.status == Status::Pending)
         .count();

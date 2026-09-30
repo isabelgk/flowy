@@ -264,6 +264,13 @@ fn render_worktrees(f: &mut Frame, app: &mut App, left: Rect, right: Rect) {
 }
 
 fn render_help(f: &mut Frame, app: &App, area: Rect) {
+    if let Some(err) = &app.error {
+        f.render_widget(
+            Paragraph::new(err.as_str()).style(Style::default().fg(Color::Red)),
+            area,
+        );
+        return;
+    }
     let key_style = Style::default().fg(Color::Yellow);
 
     let spans: Vec<Span> = match (app.view, app.input_mode) {

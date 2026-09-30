@@ -2,9 +2,10 @@ use anyhow::{Context, Result};
 use clap::ArgMatches;
 use std::path::{Path, PathBuf};
 
+use super::get_repo_root;
 use crate::core::{
     names::workstream_dir,
-    repo::{ensure_local_excluded, find_repo_root, worktrees_dir},
+    repo::{ensure_local_excluded, worktrees_dir},
 };
 use crate::output::print_json;
 
@@ -13,8 +14,10 @@ enum Outcome {
     Moved,
     // Notes with no worktree to move into; the user must archive or move them.
     Orphaned,
-    // Destination already populated, so a previous run covered this one.
-    Skipped,
+    // Something (a `ticket add`, say) created the new notes dir before the old
+    // one was migrated. Both hold notes, and their ticket numbers can overlap,
+    // so the user has to merge them.
+    Conflict,
 }
 
 impl Outcome {
@@ -22,16 +25,8 @@ impl Outcome {
         match self {
             Outcome::Moved => "moved",
             Outcome::Orphaned => "orphaned",
-            Outcome::Skipped => "skipped",
+            Outcome::Conflict => "conflict",
         }
-    }
-}
-
-fn get_repo_root(matches: &ArgMatches) -> Result<PathBuf> {
-    if let Some(path) = matches.get_one::<String>("repo-root") {
-        Ok(PathBuf::from(path))
-    } else {
-        find_repo_root()
     }
 }
 
@@ -74,8 +69,10 @@ pub fn run(matches: &ArgMatches) -> Result<()> {
         let worktree = worktrees_dir(&root).join(&name);
         let new_dir = workstream_dir(&root, &name);
 
+        // A completed migration moves the old dir away, so finding both means
+        // the new one was started independently.
         if new_dir.exists() {
-            results.push((name, Outcome::Skipped, new_dir));
+            results.push((name, Outcome::Conflict, old_dir));
             continue;
         }
         if !worktree.is_dir() {
@@ -117,7 +114,13 @@ pub fn run(matches: &ArgMatches) -> Result<()> {
     for (name, outcome, path) in &results {
         match outcome {
             Outcome::Moved => println!("{prefix} {name} -> {}", path.display()),
-            Outcome::Skipped => println!("skipped {name} (already at {})", path.display()),
+            Outcome::Conflict => println!(
+                "conflict {name}: notes exist at both {} and {}\n  \
+                 merge the old notes into the new dir by hand (ticket numbers may overlap), \
+                 then remove the old dir",
+                path.display(),
+                workstream_dir(&root, name).display()
+            ),
             // `wt archive` cannot help here: it moves notes out of a worktree,
             // and there is no worktree. Name the destination instead.
             Outcome::Orphaned => println!(

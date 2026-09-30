@@ -14,6 +14,7 @@ impl Server {
     fn start(repo: &TestRepo) -> Server {
         let bin = assert_cmd::cargo::cargo_bin("flowy");
         let mut child = Command::new(bin)
+            .envs(common::GIT_ENV)
             .arg("--repo-root")
             .arg(&repo.root)
             .args(["web", "--port", "0"])
@@ -48,10 +49,20 @@ impl Server {
     }
 
     fn send(&self, method: &str, path: &str, origin: Option<&str>, body: &str) -> (u16, String) {
-        let mut request = format!(
-            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n",
-            self.port
-        );
+        let host = format!("127.0.0.1:{}", self.port);
+        self.send_to(&host, method, path, origin, body)
+    }
+
+    fn send_to(
+        &self,
+        host: &str,
+        method: &str,
+        path: &str,
+        origin: Option<&str>,
+        body: &str,
+    ) -> (u16, String) {
+        let mut request =
+            format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n");
         if let Some(origin) = origin {
             request.push_str(&format!("Origin: {origin}\r\n"));
         }
@@ -190,6 +201,143 @@ fn a_cross_origin_post_changes_nothing() {
     assert_eq!(status, 403);
 
     assert!(!repo.ticket("feat-web", 1).exists());
+}
+
+#[test]
+fn a_foreign_host_is_refused_even_with_a_matching_origin() {
+    let repo = repo_with_worktree();
+    let server = Server::start(&repo);
+    let evil = format!("evil.example:{}", server.port);
+
+    let (status, page) = server.send_to(&evil, "GET", "/w/feat-web", None, "");
+    assert_eq!(status, 403);
+    assert!(!page.contains("feat-web"), "{page}");
+
+    let origin = format!("http://{evil}");
+    let body = form(&[("title", "Rebound")]);
+    let (status, _) = server.send_to(&evil, "POST", "/w/feat-web/tickets", Some(&origin), &body);
+    assert_eq!(status, 403);
+    assert!(!repo.ticket("feat-web", 1).exists());
+
+    let localhost = format!("localhost:{}", server.port);
+    assert_eq!(
+        server.send_to(&localhost, "GET", "/w/feat-web", None, "").0,
+        200
+    );
+}
+
+#[test]
+fn a_workstream_name_cannot_escape_the_worktrees_dir() {
+    let repo = repo_with_worktree();
+    let outside = tempfile::tempdir().expect("tempdir");
+    let server = Server::start(&repo);
+
+    let absolute = form_urlencoded::byte_serialize(outside.path().to_str().unwrap().as_bytes())
+        .collect::<String>()
+        .replace('+', "%20");
+    let target = outside.path().join(".local/workstream/tickets/001.md");
+    for name in [absolute.as_str(), "..%2Fworktrees%2Ffeat-web"] {
+        let body = form(&[("title", "Escaped")]);
+        let (status, _) = server.post(&format!("/w/{name}/tickets"), &body);
+        assert_eq!(status, 404, "{name}");
+        assert_eq!(server.get(&format!("/w/{name}")).0, 404, "{name}");
+    }
+    assert!(!target.exists());
+    assert!(!repo.ticket("feat-web", 1).exists());
+}
+
+fn send_head(server: &Server, path: &str, content_length: usize, body: &str) -> String {
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}\r\n\
+         Content-Type: application/x-www-form-urlencoded\r\n\
+         Content-Length: {content_length}\r\nConnection: close\r\n\r\n{body}",
+        port = server.port
+    );
+    let mut stream = TcpStream::connect(("127.0.0.1", server.port)).expect("connect");
+    stream.write_all(request.as_bytes()).expect("send request");
+    stream
+        .shutdown(std::net::Shutdown::Write)
+        .expect("close write half");
+    let mut response = String::new();
+    stream.read_to_string(&mut response).expect("read response");
+    response
+}
+
+#[test]
+fn an_oversized_or_cut_off_body_is_refused() {
+    let repo = repo_with_worktree();
+    let server = Server::start(&repo);
+
+    // Past the size tiny_http reads eagerly, so the body reaches flowy's reader.
+    let body = form(&[("title", "Partial"), ("description", &"x".repeat(4096))]);
+    let response = send_head(&server, "/w/feat-web/tickets", 64 << 20, &body);
+    assert!(response.starts_with("HTTP/1.1 413"), "{response}");
+
+    let response = send_head(&server, "/w/feat-web/tickets", body.len() + 100, &body);
+    assert!(response.starts_with("HTTP/1.1 400"), "{response}");
+
+    assert!(!repo.ticket("feat-web", 1).exists());
+}
+
+#[test]
+fn names_outside_ascii_and_with_url_syntax_are_encoded() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "caf\u{e9}"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["wt", "new", "-b", "fix#1"])
+        .assert()
+        .success();
+    let server = Server::start(&repo);
+
+    let (status, index) = server.get("/");
+    assert_eq!(status, 303, "{index}");
+    assert!(index.contains("Location: /w/caf%C3%A9"), "{index}");
+
+    let (status, response) = server.post("/w/caf%C3%A9/tickets", &form(&[("title", "Accented")]));
+    assert_eq!(status, 303, "{response}");
+    assert!(
+        response.contains("Location: /w/caf%C3%A9/t/1"),
+        "{response}"
+    );
+
+    let (status, page) = server.get("/w/caf%C3%A9");
+    assert_eq!(status, 200);
+    assert!(page.contains("href=\"/w/caf%C3%A9/t/1\""), "{page}");
+    assert!(page.contains("href=\"/w/fix%231\""), "{page}");
+    assert_eq!(server.get("/w/fix%231").0, 200);
+}
+
+#[test]
+fn a_slow_upload_does_not_stall_other_requests() {
+    let repo = repo_with_worktree();
+    let server = Server::start(&repo);
+
+    // Headers promise more body than is ever sent, past the size tiny_http
+    // would read eagerly, and the connection stays open.
+    let mut slow = TcpStream::connect(("127.0.0.1", server.port)).expect("connect");
+    let head = format!(
+        "POST /w/feat-web/tickets HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\
+         Origin: http://127.0.0.1:{port}\r\nContent-Length: 100000\r\n\r\ntitle=Slow",
+        port = server.port
+    );
+    slow.write_all(head.as_bytes()).expect("send head");
+
+    let mut fast = TcpStream::connect(("127.0.0.1", server.port)).expect("connect");
+    fast.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
+    let request = format!(
+        "GET /w/feat-web HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+        server.port
+    );
+    fast.write_all(request.as_bytes()).expect("send request");
+    let mut response = String::new();
+    fast.read_to_string(&mut response)
+        .expect("a page while the upload is still open");
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    drop(slow);
 }
 
 #[test]
@@ -334,5 +482,8 @@ fn every_page_carries_the_sidebar_toggle() {
     assert!(page.contains("aria-controls=\"workstreams\""), "{page}");
     assert!(page.contains("id=\"workstreams\""), "{page}");
     // Applied before first paint, so a collapsed sidebar does not flash open.
-    assert!(page.contains("nav-collapsed"), "{page}");
+    // The stylesheet and the toggle script mention the class and key too, so
+    // look for the restore itself, inside <head>.
+    let head = page.split("</head>").next().unwrap();
+    assert!(head.contains("getItem('flowy-nav')"), "{page}");
 }
