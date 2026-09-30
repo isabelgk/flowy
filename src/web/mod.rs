@@ -529,11 +529,19 @@ fn index(app: &App) -> Result<Reply> {
     if let Some(name) = cwd_worktree(&app.root) {
         return Ok(Reply::redirect(ws_url(&name)));
     }
-    let nav = app.nav(None);
-    match nav.workstreams.first() {
-        Some(ws) => Ok(Reply::redirect(ws_url(&ws.name))),
+    // Directory names, not list_worktrees, so opening the UI never waits on git.
+    let mut names: Vec<String> = std::fs::read_dir(worktrees_dir(&app.root))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| live_workstream(&app.root, name).is_some())
+        .collect();
+    names.sort();
+    match names.first() {
+        Some(name) => Ok(Reply::redirect(ws_url(name))),
         None => Ok(Reply::html(render::message(
-            &nav,
+            &app.nav(None),
             "No worktrees",
             "This repo has no worktrees yet. Create one with `flowy wt new -b <branch>`.",
         ))),
