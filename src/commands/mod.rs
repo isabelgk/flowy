@@ -59,7 +59,7 @@ pub fn get_repo_root(matches: &ArgMatches) -> Result<PathBuf> {
 // no longer names its own worktree directory, and the branch-derived path would
 // point at a directory that does not exist. The directory is the live worktree's
 // notes if there is one, else the archived notes; a name with neither is an
-// error, since writing there would create a stray `worktrees/<name>/`.
+// error, since writing there would create a stray `wt/<name>/`.
 pub fn resolve_workstream(matches: &ArgMatches, root: &Path) -> Result<(String, PathBuf)> {
     let name = if let Some(n) = matches.get_one::<String>("workstream") {
         n.clone()

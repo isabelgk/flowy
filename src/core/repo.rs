@@ -21,7 +21,7 @@ pub fn archive_root(root: &Path) -> PathBuf {
 }
 
 pub fn worktrees_dir(root: &Path) -> PathBuf {
-    root.join("worktrees")
+    root.join("wt")
 }
 
 // The worktree directory cwd sits inside, if any. A workstream is keyed by its

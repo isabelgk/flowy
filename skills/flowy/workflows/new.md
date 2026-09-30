@@ -25,7 +25,7 @@ and stop rather than scaffolding something the tooling cannot read.
    Do not skip worktree creation just because cwd is not itself a git repo -
    resolve the root and run against it.
 
-3. **Check for collision.** If `<repo_root>/worktrees/<safe>/` exists, stop with
+3. **Check for collision.** If `<repo_root>/wt/<safe>/` exists, stop with
    an error rather than scaffolding over it.
 
 4. **Create the worktree.** From `repo_root`:
@@ -34,7 +34,7 @@ and stop rather than scaffolding something the tooling cannot read.
    flowy worktree new -b <branch>
    ```
 
-   This creates `<repo_root>/worktrees/<safe>` and writes
+   This creates `<repo_root>/wt/<safe>` and writes
    `<ws_dir>/meta.toml` inside it.
 
 5. **Open the log:**

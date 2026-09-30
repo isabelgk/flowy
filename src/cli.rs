@@ -312,7 +312,7 @@ fn notes_cmd() -> Command {
 
 fn migrate_cmd() -> Command {
     Command::new("migrate")
-        .about("Move workstream notes from notes/workstreams/ into their worktrees")
+        .about("Move a repo from an older flowy layout onto the current one")
         .arg(
             Arg::new("dry-run")
                 .long("dry-run")

@@ -1,9 +1,12 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use super::get_repo_root;
+use super::worktree::move_worktree;
 use crate::core::{
+    meta::{read_meta, write_meta},
     names::workstream_dir,
     repo::{ensure_local_excluded, worktrees_dir},
 };
@@ -53,6 +56,78 @@ fn old_layout_dirs(root: &Path) -> Vec<(String, PathBuf)> {
         .collect()
 }
 
+// Worktrees under the project's old worktrees/ dir, which wt/ replaced. Only
+// entries with a .git file are worktrees; anything else is left where it is.
+fn old_worktrees(root: &Path) -> Vec<(String, PathBuf)> {
+    let Ok(entries) = std::fs::read_dir(root.join("worktrees")) else {
+        return Vec::new();
+    };
+    let mut dirs: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.join(".git").is_file())
+        .collect();
+    dirs.sort();
+    dirs.into_iter()
+        .filter_map(|p| Some((p.file_name()?.to_str()?.to_string(), p)))
+        .collect()
+}
+
+// Moves each worktree on its own rather than renaming worktrees/ wholesale:
+// git's admin pointers and any submodule's core.worktree name the old path, and
+// a failure partway leaves a state that re-running picks up from.
+fn migrate_worktrees(root: &Path, dry_run: bool) -> Result<Vec<(String, Outcome, PathBuf)>> {
+    let old = old_worktrees(root);
+    if old.is_empty() {
+        return Ok(Vec::new());
+    }
+    let old_root = root.join("worktrees");
+    if !dry_run
+        && let (Ok(cwd), Ok(old_root)) = (std::env::current_dir(), old_root.canonicalize())
+        && cwd
+            .canonicalize()
+            .map(|c| c.starts_with(&old_root))
+            .unwrap_or(false)
+    {
+        bail!(
+            "run this from outside the worktrees being moved (cwd is under {})",
+            old_root.display()
+        );
+    }
+
+    let mut results = Vec::new();
+    for (name, old_path) in old {
+        let new_path = worktrees_dir(root).join(&name);
+        if new_path.exists() {
+            results.push((name, Outcome::Conflict, old_path));
+            continue;
+        }
+        if !dry_run {
+            std::fs::create_dir_all(worktrees_dir(root))
+                .with_context(|| format!("creating {}", worktrees_dir(root).display()))?;
+            move_worktree(root, &old_path, &new_path).with_context(|| {
+                format!(
+                    "moving {} to {}; re-run migrate once resolved",
+                    old_path.display(),
+                    new_path.display()
+                )
+            })?;
+            let ws_dir = workstream_dir(root, &name);
+            if ws_dir.join("meta.toml").exists() {
+                let mut meta = read_meta(&ws_dir)?;
+                meta.worktree.path = new_path.to_string_lossy().into_owned();
+                write_meta(&ws_dir, &meta)?;
+            }
+        }
+        results.push((name, Outcome::Moved, new_path));
+    }
+    if !dry_run {
+        // Fails, harmlessly, while conflicts or non-worktree entries remain.
+        let _ = std::fs::remove_dir(&old_root);
+    }
+    Ok(results)
+}
+
 pub fn run(matches: &ArgMatches) -> Result<()> {
     let root = get_repo_root(matches)?;
     let json = matches.get_flag("json");
@@ -62,6 +137,15 @@ pub fn run(matches: &ArgMatches) -> Result<()> {
     if !dry_run {
         ensure_local_excluded(&root)?;
     }
+
+    let worktree_results = migrate_worktrees(&root, dry_run)?;
+    // A dry run leaves worktrees under worktrees/, so the notes step has to
+    // count the ones it would have moved as present.
+    let pending_worktrees: HashSet<&str> = worktree_results
+        .iter()
+        .filter(|(_, outcome, _)| dry_run && matches!(outcome, Outcome::Moved))
+        .map(|(name, _, _)| name.as_str())
+        .collect();
 
     let mut results: Vec<(String, Outcome, PathBuf)> = Vec::new();
 
@@ -75,7 +159,7 @@ pub fn run(matches: &ArgMatches) -> Result<()> {
             results.push((name, Outcome::Conflict, old_dir));
             continue;
         }
-        if !worktree.is_dir() {
+        if !worktree.is_dir() && !pending_worktrees.contains(name.as_str()) {
             results.push((name, Outcome::Orphaned, old_dir));
             continue;
         }
@@ -92,25 +176,43 @@ pub fn run(matches: &ArgMatches) -> Result<()> {
     }
 
     if json {
-        let val: Vec<serde_json::Value> = results
-            .iter()
-            .map(|(name, outcome, path)| {
-                serde_json::json!({
-                    "workstream": name,
-                    "outcome": outcome.label(),
-                    "path": path.to_string_lossy(),
+        let to_json = |results: &[(String, Outcome, PathBuf)]| -> Vec<serde_json::Value> {
+            results
+                .iter()
+                .map(|(name, outcome, path)| {
+                    serde_json::json!({
+                        "workstream": name,
+                        "outcome": outcome.label(),
+                        "path": path.to_string_lossy(),
+                    })
                 })
-            })
-            .collect();
-        return print_json(&serde_json::json!({"dry_run": dry_run, "workstreams": val}));
+                .collect()
+        };
+        return print_json(&serde_json::json!({
+            "dry_run": dry_run,
+            "worktrees": to_json(&worktree_results),
+            "workstreams": to_json(&results),
+        }));
     }
 
-    if results.is_empty() {
+    if worktree_results.is_empty() && results.is_empty() {
         println!("Nothing to migrate.");
         return Ok(());
     }
 
     let prefix = if dry_run { "would move" } else { "moved" };
+    for (name, outcome, path) in &worktree_results {
+        match outcome {
+            Outcome::Moved => println!("{prefix} worktree {name} -> {}", path.display()),
+            Outcome::Conflict => println!(
+                "conflict worktree {name}: both {} and {} exist\n  \
+                 remove or rename one by hand, then re-run migrate",
+                path.display(),
+                worktrees_dir(&root).join(name).display()
+            ),
+            Outcome::Orphaned => unreachable!("worktree moves are never orphaned"),
+        }
+    }
     for (name, outcome, path) in &results {
         match outcome {
             Outcome::Moved => println!("{prefix} {name} -> {}", path.display()),

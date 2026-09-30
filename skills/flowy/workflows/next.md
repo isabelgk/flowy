@@ -8,7 +8,7 @@ context, and write a rolling recommendation to `<ws_dir>/next.md`.
 Everything after the verb: `<workstream-name>`
 
 Required. If missing, default to the current git branch's workstream; if cwd is
-not inside a worktree, list `<repo_root>/worktrees/` and ask which one with
+not inside a worktree, list `<repo_root>/wt/` and ask which one with
 `AskUserQuestion`.
 
 ## Steps

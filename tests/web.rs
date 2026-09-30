@@ -250,7 +250,7 @@ fn a_workstream_name_cannot_escape_the_worktrees_dir() {
         .collect::<String>()
         .replace('+', "%20");
     let target = outside.path().join(".local/workstream/tickets/1.md");
-    for name in [absolute.as_str(), "..%2Fworktrees%2Ffeat-web"] {
+    for name in [absolute.as_str(), "..%2Fwt%2Ffeat-web"] {
         let body = form(&[("title", "Escaped")]);
         let (status, _) = server.post(&format!("/w/{name}/tickets"), &body);
         assert_eq!(status, 404, "{name}");

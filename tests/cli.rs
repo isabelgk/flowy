@@ -13,6 +13,7 @@ struct Meta {
 
 #[derive(serde::Deserialize)]
 struct WorktreeMeta {
+    path: String,
     branch: String,
 }
 
@@ -30,7 +31,7 @@ fn wt_new_creates_worktree_and_meta() {
         .assert()
         .success();
 
-    let worktree = repo.root.join("worktrees").join("test-branch");
+    let worktree = repo.root.join("wt").join("test-branch");
     assert!(worktree.is_dir(), "worktree directory should exist");
 
     let ws_dir = ws_dir_in(&repo.root, "test-branch");
@@ -183,7 +184,7 @@ fn workstream_dir_is_excluded_from_git_status() {
         .assert()
         .success();
 
-    let worktree = repo.root.join("worktrees").join("test-branch");
+    let worktree = repo.root.join("wt").join("test-branch");
     assert!(repo.ws_dir("test-branch").join("meta.toml").exists());
 
     let status = git_out(
@@ -215,7 +216,7 @@ fn wt_archive_removes_worktree_and_moves_notes() {
         .success();
 
     assert!(
-        !repo.root.join("worktrees").join("test-branch").exists(),
+        !repo.root.join("wt").join("test-branch").exists(),
         "worktree should be removed"
     );
     assert!(
@@ -235,7 +236,7 @@ fn wt_archive_removes_a_worktree_with_a_submodule() {
         .args(["wt", "new", "-b", "feat/sub"])
         .assert()
         .success();
-    let worktree = repo.root.join("worktrees").join("feat-sub");
+    let worktree = repo.root.join("wt").join("feat-sub");
 
     let outside = repo.root.parent().unwrap().to_path_buf();
     let sub_src = outside.join("subsrc");
@@ -270,7 +271,7 @@ fn wt_archive_restores_notes_when_removal_fails() {
         .args(["wt", "new", "-b", "feat/locked"])
         .assert()
         .success();
-    let worktree = repo.root.join("worktrees").join("feat-locked");
+    let worktree = repo.root.join("wt").join("feat-locked");
     git_in(&worktree, &["worktree", "lock", worktree.to_str().unwrap()]);
     repo.cmd()
         .args(["ticket", "add", "-w", "feat-locked", "Survives"])
@@ -310,7 +311,7 @@ fn wt_unarchive_restores_worktree_and_notes() {
         .success();
 
     assert!(
-        repo.root.join("worktrees").join("test-branch").is_dir(),
+        repo.root.join("wt").join("test-branch").is_dir(),
         "worktree should be restored"
     );
     assert!(
@@ -440,7 +441,7 @@ fn w_names_an_archived_workstream() {
     );
 
     // No stray worktree dir, so unarchive still has somewhere to go.
-    assert!(!repo.root.join("worktrees").join("feat").exists());
+    assert!(!repo.root.join("wt").join("feat").exists());
     repo.cmd()
         .args(["wt", "unarchive", "feat"])
         .assert()
@@ -456,7 +457,7 @@ fn w_with_an_unknown_name_writes_nothing() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("no workstream named 'typo'"));
-    assert!(!repo.root.join("worktrees").join("typo").exists());
+    assert!(!repo.root.join("wt").join("typo").exists());
 }
 
 #[test]
@@ -539,7 +540,7 @@ fn wt_archive_force_flag_bypasses_dirty_check() {
         .success();
 
     // Create an untracked file to make the worktree dirty.
-    let worktree = repo.root.join("worktrees").join("test-branch");
+    let worktree = repo.root.join("wt").join("test-branch");
     fs::write(worktree.join("untracked.txt"), "dirty").unwrap();
 
     repo.cmd()
@@ -972,7 +973,7 @@ fn t_infers_workstream_from_worktree_cwd() {
     // No -w flag; the worktree directory cwd sits in names the workstream.
     repo.cmd()
         .args(["ticket", "add", "My ticket"])
-        .current_dir(repo.root.join("worktrees").join("test-branch"))
+        .current_dir(repo.root.join("wt").join("test-branch"))
         .assert()
         .success();
 
@@ -994,7 +995,7 @@ fn t_w_flag_overrides_inferred_branch() {
     // Run from other-branch worktree but write to a different workstream via -w.
     repo.cmd()
         .args(["ticket", "add", "-w", "target-branch", "My ticket"])
-        .current_dir(repo.root.join("worktrees").join("other-branch"))
+        .current_dir(repo.root.join("wt").join("other-branch"))
         .assert()
         .success();
 
@@ -1044,14 +1045,14 @@ fn branch_fallback_reads_the_repo_root_not_the_cwd() {
         .current_dir(elsewhere.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("worktrees/main/.local/workstream"));
+        .stdout(predicate::str::contains("wt/main/.local/workstream"));
 }
 
 #[test]
 fn branch_fallback_reports_a_failing_git() {
     let dir = tempfile::TempDir::new().unwrap();
     let root = dir.path().join("not-a-repo");
-    fs::create_dir_all(root.join("worktrees")).unwrap();
+    fs::create_dir_all(root.join("wt")).unwrap();
     common::flowy()
         .arg("--repo-root")
         .arg(&root)
@@ -1104,7 +1105,7 @@ fn wt_archive_json_refuses_a_dirty_worktree_without_prompting() {
         .args(["wt", "new", "-b", "feat"])
         .assert()
         .success();
-    fs::write(repo.root.join("worktrees/feat/wip.txt"), "wip\n").unwrap();
+    fs::write(repo.root.join("wt/feat/wip.txt"), "wip\n").unwrap();
 
     repo.cmd()
         .args(["--json", "wt", "archive", "feat"])
@@ -1112,7 +1113,7 @@ fn wt_archive_json_refuses_a_dirty_worktree_without_prompting() {
         .failure()
         .stdout("")
         .stderr(predicate::str::contains("--force"));
-    assert!(repo.root.join("worktrees/feat").exists());
+    assert!(repo.root.join("wt/feat").exists());
 }
 
 #[test]
@@ -1167,8 +1168,8 @@ fn init_creates_project_structure() {
     assert!(project.join(".bare").is_dir(), ".bare should exist");
     assert!(project.join(".git").is_file(), ".git pointer should exist");
     assert!(
-        project.join("worktrees").join("main").is_dir(),
-        "worktrees/main should exist"
+        project.join("wt").join("main").is_dir(),
+        "wt/main should exist"
     );
     assert!(
         ws_dir_in(&project, "main").is_dir(),
@@ -1205,10 +1206,10 @@ fn init_with_relative_path_creates_worktree() {
     assert!(
         tmp.path()
             .join("myproject")
-            .join("worktrees")
+            .join("wt")
             .join("main")
             .is_dir(),
-        "worktrees/main should exist when init is called with a relative path"
+        "wt/main should exist when init is called with a relative path"
     );
 }
 
@@ -1347,8 +1348,8 @@ fn clone_scaffolds_default_branch_workstream() {
     let project = tmp.path().join("project");
     assert!(project.join(".bare").is_dir(), ".bare should exist");
     assert!(
-        project.join("worktrees").join("main").is_dir(),
-        "worktrees/main should exist after clone"
+        project.join("wt").join("main").is_dir(),
+        "wt/main should exist after clone"
     );
     let ws_main = ws_dir_in(&project, "main");
     assert!(
@@ -1372,7 +1373,7 @@ fn clone_tracks_origin_branches() {
         .assert()
         .success();
     let project = tmp.path().join("project");
-    let main_wt = project.join("worktrees").join("main");
+    let main_wt = project.join("wt").join("main");
     assert_eq!(
         git_out(&main_wt, &["rev-parse", "--abbrev-ref", "main@{upstream}"]).trim(),
         "origin/main"
@@ -1390,7 +1391,7 @@ fn clone_tracks_origin_branches() {
         .assert()
         .success();
 
-    let later_wt = project.join("worktrees").join("later");
+    let later_wt = project.join("wt").join("later");
     assert_eq!(
         git_out(&later_wt, &["rev-parse", "HEAD"]),
         git_out(&src, &["rev-parse", "HEAD"])
@@ -1417,8 +1418,8 @@ fn clone_scaffolds_non_main_default_branch() {
 
     let project = tmp.path().join("project");
     assert!(
-        project.join("worktrees").join("trunk").is_dir(),
-        "worktrees/trunk should exist after clone"
+        project.join("wt").join("trunk").is_dir(),
+        "wt/trunk should exist after clone"
     );
     let ws = ws_dir_in(&project, "trunk");
     assert!(
@@ -1447,10 +1448,10 @@ fn wt_rename_moves_branch_dir_and_notes() {
         .assert()
         .success();
 
-    assert!(!repo.root.join("worktrees").join("feat-old").exists());
+    assert!(!repo.root.join("wt").join("feat-old").exists());
     assert!(!repo.ws_dir("feat-old").exists());
 
-    let new_wt = repo.root.join("worktrees").join("feat-new");
+    let new_wt = repo.root.join("wt").join("feat-new");
     assert!(new_wt.is_dir(), "renamed worktree dir should exist");
     let new_ws = repo.ws_dir("feat-new");
     assert_eq!(read_meta(&new_ws).worktree.branch, "feat/new");
@@ -1481,7 +1482,7 @@ fn wt_rename_branch_only_keeps_dirs() {
         .success();
 
     let ws = ws_dir_in(&repo.root, "keep-me");
-    assert!(repo.root.join("worktrees").join("keep-me").is_dir());
+    assert!(repo.root.join("wt").join("keep-me").is_dir());
     assert_eq!(read_meta(&ws).worktree.branch, "keep/me");
 
     let list = git_out(&repo.root, &["worktree", "list", "--porcelain"]);
@@ -1558,7 +1559,7 @@ fn rename_worktree_with_submodule(relative_paths: bool) {
         .args(["wt", "new", "-b", "feat/sub"])
         .assert()
         .success();
-    let old_wt = repo.root.join("worktrees").join("feat-sub");
+    let old_wt = repo.root.join("wt").join("feat-sub");
 
     // A standalone repo to serve as the submodule's origin, outside the tree.
     let outside = repo.root.parent().unwrap().to_path_buf();
@@ -1586,7 +1587,7 @@ fn rename_worktree_with_submodule(relative_paths: bool) {
         .assert()
         .success();
 
-    let new_wt = repo.root.join("worktrees").join("feat-renamed");
+    let new_wt = repo.root.join("wt").join("feat-renamed");
     assert!(!old_wt.exists(), "old worktree dir should be gone");
     assert_eq!(
         std::fs::read_to_string(new_wt.join("sub").join("wip.txt")).unwrap(),
@@ -1625,7 +1626,7 @@ fn wt_rename_honors_a_worktree_lock() {
         .args(["wt", "new", "-b", "feat/locked"])
         .assert()
         .success();
-    let old_wt = repo.root.join("worktrees").join("feat-locked");
+    let old_wt = repo.root.join("wt").join("feat-locked");
     git_in(&old_wt, &["worktree", "lock", old_wt.to_str().unwrap()]);
 
     repo.cmd()
@@ -1634,7 +1635,7 @@ fn wt_rename_honors_a_worktree_lock() {
         .failure()
         .stderr(predicate::str::contains("locked"));
     assert!(old_wt.exists());
-    assert!(!repo.root.join("worktrees").join("feat-moved").exists());
+    assert!(!repo.root.join("wt").join("feat-moved").exists());
 }
 
 #[test]
@@ -1645,7 +1646,7 @@ fn wt_rename_refuses_from_inside_worktree() {
         .assert()
         .success();
 
-    let wt = repo.root.join("worktrees").join("feat-x");
+    let wt = repo.root.join("wt").join("feat-x");
     repo.cmd()
         .current_dir(&wt)
         .args(["wt", "rename", "feat-x", "feat/y"])
@@ -1675,7 +1676,7 @@ fn seed_old_layout(root: &std::path::Path, name: &str, with_worktree: bool) -> s
             &[
                 "worktree",
                 "add",
-                root.join("worktrees").join(name).to_str().unwrap(),
+                root.join("wt").join(name).to_str().unwrap(),
                 "-b",
                 name,
             ],
@@ -1791,6 +1792,114 @@ fn migrate_leaves_archive_alone_and_is_idempotent() {
     assert!(repo.ws_dir("legacy").join("tickets/001.md").exists());
 }
 
+// A worktree where flowy put it before wt/ replaced worktrees/, with its notes
+// already inside it.
+fn seed_old_worktree(root: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let old = root.join("worktrees").join(name);
+    git_in(
+        &root.join(".bare"),
+        &["worktree", "add", old.to_str().unwrap(), "-b", name],
+    );
+    let ws = old.join(".local").join("workstream");
+    fs::create_dir_all(ws.join("tickets")).unwrap();
+    fs::write(
+        ws.join("tickets").join("1.md"),
+        "+++\ntitle = \"legacy\"\nstatus = \"pending\"\n+++\nbody\n",
+    )
+    .unwrap();
+    fs::write(
+        ws.join("meta.toml"),
+        format!(
+            "created = \"x\"\n[worktree]\npath = \"{}\"\nbranch = \"{name}\"\n",
+            old.display()
+        ),
+    )
+    .unwrap();
+    old
+}
+
+#[test]
+fn migrate_moves_worktrees_into_wt() {
+    let repo = TestRepo::new();
+    let old = seed_old_worktree(&repo.root, "legacy");
+
+    repo.cmd()
+        .arg("migrate")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("moved worktree legacy"));
+
+    let new = repo.root.join("wt").join("legacy");
+    assert!(!old.exists(), "old worktree should be gone");
+    assert!(
+        !repo.root.join("worktrees").exists(),
+        "empty worktrees/ should be removed"
+    );
+    assert!(
+        git_out(&repo.root.join(".bare"), &["worktree", "list"])
+            .contains(new.canonicalize().unwrap().to_str().unwrap()),
+        "git should know the worktree's new path"
+    );
+    git_in(&new, &["status"]);
+    assert_eq!(
+        read_meta(&repo.ws_dir("legacy")).worktree.path,
+        new.to_string_lossy(),
+        "meta should name the new path"
+    );
+    let output = repo
+        .cmd()
+        .args(["ticket", "list", "-w", "legacy", "--json"])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json.as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn migrate_dry_run_plans_worktree_and_notes_moves_together() {
+    let repo = TestRepo::new();
+    let old_notes = seed_old_layout(&repo.root, "legacy", false);
+    git_in(
+        &repo.root.join(".bare"),
+        &[
+            "worktree",
+            "add",
+            repo.root.join("worktrees/legacy").to_str().unwrap(),
+            "-b",
+            "legacy",
+        ],
+    );
+
+    repo.cmd()
+        .args(["migrate", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("would move worktree legacy"))
+        .stdout(predicate::str::contains("would move legacy"))
+        .stdout(predicate::str::contains("orphaned").not());
+
+    assert!(repo.root.join("worktrees/legacy").is_dir());
+    assert!(old_notes.is_dir());
+
+    repo.cmd().arg("migrate").assert().success();
+    assert!(repo.ws_dir("legacy").join("tickets/001.md").exists());
+}
+
+#[test]
+fn migrate_leaves_a_worktree_whose_target_exists() {
+    let repo = TestRepo::new();
+    let old = seed_old_worktree(&repo.root, "legacy");
+    fs::create_dir_all(repo.root.join("wt/legacy")).unwrap();
+
+    repo.cmd()
+        .arg("migrate")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("conflict worktree legacy"));
+
+    assert!(old.is_dir(), "the old worktree must stay put");
+}
+
 #[test]
 fn migrate_adds_the_exclude_entry() {
     let repo = TestRepo::new();
@@ -1847,7 +1956,7 @@ fn repo_with_renamed_branch() -> TestRepo {
         .assert()
         .success();
     git_in(
-        &repo.root.join("worktrees").join("feat-foo"),
+        &repo.root.join("wt").join("feat-foo"),
         &["branch", "-m", "feat/bar"],
     );
     repo
@@ -1860,7 +1969,7 @@ fn t_list_follows_the_worktree_dir_when_the_branch_is_renamed() {
     let output = repo
         .cmd()
         .args(["ticket", "list", "--json"])
-        .current_dir(repo.root.join("worktrees").join("feat-foo"))
+        .current_dir(repo.root.join("wt").join("feat-foo"))
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1878,7 +1987,7 @@ fn t_status_counts_tickets_when_the_branch_is_renamed() {
     let output = repo
         .cmd()
         .args(["ticket", "status", "--json"])
-        .current_dir(repo.root.join("worktrees").join("feat-foo"))
+        .current_dir(repo.root.join("wt").join("feat-foo"))
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -1895,7 +2004,7 @@ fn t_add_writes_into_the_worktree_when_the_branch_is_renamed() {
 
     repo.cmd()
         .args(["ticket", "add", "Second"])
-        .current_dir(repo.root.join("worktrees").join("feat-foo"))
+        .current_dir(repo.root.join("wt").join("feat-foo"))
         .assert()
         .success();
 
@@ -1903,7 +2012,7 @@ fn t_add_writes_into_the_worktree_when_the_branch_is_renamed() {
     // A branch-derived path would scaffold a directory that is not a worktree,
     // stranding tickets where nothing reads them.
     assert!(
-        !repo.root.join("worktrees").join("feat-bar").exists(),
+        !repo.root.join("wt").join("feat-bar").exists(),
         "must not create a phantom worktree dir named after the branch"
     );
 }
@@ -1926,7 +2035,7 @@ fn wt_ls_json_names_the_worktree_dir_not_the_branch() {
     // wt archive / wt rename key on this name, so it must name a real directory.
     assert!(
         repo.root
-            .join("worktrees")
+            .join("wt")
             .join(entry["name"].as_str().unwrap())
             .is_dir()
     );
@@ -2699,7 +2808,7 @@ fn wt_new_refuses_start_point_for_existing_branch() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("already exists"));
-    assert!(!repo.root.join("worktrees").join("existing").exists());
+    assert!(!repo.root.join("wt").join("existing").exists());
 }
 
 #[test]

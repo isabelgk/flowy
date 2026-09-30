@@ -38,7 +38,7 @@ mod tests {
         let meta = Meta {
             created: "2024-01-01T00:00:00Z".to_string(),
             worktree: WorktreeMeta {
-                path: "/worktrees/my-branch".to_string(),
+                path: "/wt/my-branch".to_string(),
                 branch: "feat/my-branch".to_string(),
             },
         };

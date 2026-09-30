@@ -1,6 +1,6 @@
 ---
 name: flowy
-description: Drive the flowy CLI and the workstream style of working - bare git repos, per-branch worktrees, and numbered markdown tickets that live beside the code. Use this whenever the repo has a `.bare/` directory or a `worktrees/` directory, whenever the user runs `flowy` or mentions workstreams, tickets, or worktrees, and whenever they ask to start a branch, plan a piece of work, file or pick up or finish a ticket, figure out what to work on next, or close out finished work. Also use it for the bare verbs `/flowy new|plan|next|implement|ticket|milestone|close`, and for casual asks like "file a ticket for that", "what's next here", "let's start on 4", "we reached the goal, clear this out for the next phase", or "I'm done with this branch" - even when neither flowy nor the word ticket is spoken.
+description: Drive the flowy CLI and the workstream style of working - bare git repos, per-branch worktrees, and numbered markdown tickets that live beside the code. Use this whenever the repo has a `.bare/` directory or a `wt/` directory, whenever the user runs `flowy` or mentions workstreams, tickets, or worktrees, and whenever they ask to start a branch, plan a piece of work, file or pick up or finish a ticket, figure out what to work on next, or close out finished work. Also use it for the bare verbs `/flowy new|plan|next|implement|ticket|milestone|close`, and for casual asks like "file a ticket for that", "what's next here", "let's start on 4", "we reached the goal, clear this out for the next phase", or "I'm done with this branch" - even when neither flowy nor the word ticket is spoken.
 ---
 
 # flowy and the workstream style
@@ -20,7 +20,7 @@ way it does.
 ```
 project/
   .bare/                              # bare git repository
-  worktrees/<safe-name>/              # one per branch (/ replaced with -)
+  wt/<safe-name>/                     # one per branch (/ replaced with -)
     .local/workstream/                # this workstream's notes
       meta.toml                       # branch + worktree path
       status.md                       # append-only activity log
@@ -39,7 +39,7 @@ to `.flowy/archive/` to outlive it.
 `repo_root` is the nearest ancestor of cwd containing `.bare/`. So:
 
 ```
-ws_dir = <repo_root>/worktrees/<name>/.local/workstream
+ws_dir = <repo_root>/wt/<name>/.local/workstream
 ```
 
 `flowy` does that walk-up itself, so you only need to resolve `repo_root` by
@@ -103,7 +103,7 @@ because the request arrived mid-conversation:
 
 When the workstream is unnamed, default to the one for the current git branch -
 that is what `flowy` itself does when `-w` is omitted. If cwd is not inside a
-worktree, list `<repo_root>/worktrees/` and ask which one with
+worktree, list `<repo_root>/wt/` and ask which one with
 `AskUserQuestion`.
 
 Ambiguity between `plan` and `ticket` is the common case: `plan` is for work
@@ -184,7 +184,7 @@ substitute for that reasoning.
 
 **Target explicitly.** `-w <name>` selects a workstream other than the current
 branch's. Archived workstreams are reachable *only* by explicit `-w`; they
-never appear in an enumeration of `worktrees/`.
+never appear in an enumeration of `wt/`.
 
 **One ticket description format.** `plan` and `ticket` both write it and `next`
 parses ordering out of it, so it is shared rather than per-workflow. Keep each

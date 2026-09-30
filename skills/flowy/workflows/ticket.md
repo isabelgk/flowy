@@ -9,7 +9,7 @@ Everything after the verb: `<workstream-name> [brief]`
 
 - `<workstream-name>`: first token. If missing, default to the current git
   branch's workstream; if cwd is not inside a worktree, list
-  `<repo_root>/worktrees/` and ask which one with `AskUserQuestion`.
+  `<repo_root>/wt/` and ask which one with `AskUserQuestion`.
 - `[brief]`: the rest - a natural-language description of what needs doing. If
   absent, ask before proceeding. When the request arrived mid-conversation
   ("file a ticket for that"), the brief is the preceding discussion; use it.

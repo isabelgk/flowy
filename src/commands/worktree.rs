@@ -88,10 +88,10 @@ pub fn init(matches: &ArgMatches) -> Result<()> {
     }
 
     std::fs::write(root.join(".git"), "gitdir: ./.bare\n").context("writing .git pointer")?;
-    std::fs::create_dir_all(root.join("worktrees")).context("creating worktrees/")?;
+    std::fs::create_dir_all(worktrees_dir(&root)).context("creating wt/")?;
     ensure_local_excluded(&root)?;
 
-    let worktree_path = root.join("worktrees").join("main");
+    let worktree_path = worktrees_dir(&root).join("main");
     let status = git()
         .args(["worktree", "add"])
         .arg(&worktree_path)
@@ -165,7 +165,7 @@ pub fn clone(matches: &ArgMatches) -> Result<()> {
     // .git pointer so git commands work from project root
     std::fs::write(root.join(".git"), "gitdir: ./.bare\n").context("writing .git pointer")?;
 
-    std::fs::create_dir_all(root.join("worktrees")).context("creating worktrees/")?;
+    std::fs::create_dir_all(worktrees_dir(&root)).context("creating wt/")?;
     ensure_local_excluded(&root)?;
 
     // Detect the default branch and scaffold its worktree and notes.
@@ -185,7 +185,7 @@ pub fn clone(matches: &ArgMatches) -> Result<()> {
     };
 
     let safe = safe_name(&default_branch);
-    let worktree_path = root.join("worktrees").join(&safe);
+    let worktree_path = worktrees_dir(&root).join(&safe);
     let status = git()
         .args(["worktree", "add"])
         .arg(&worktree_path)
@@ -925,7 +925,7 @@ fn rename(matches: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-fn move_worktree(root: &Path, old: &Path, new: &Path) -> Result<()> {
+pub(crate) fn move_worktree(root: &Path, old: &Path, new: &Path) -> Result<()> {
     // Fast path: git moves the dir and rewrites its own admin files.
     let moved = Command::new("git")
         .arg("worktree")

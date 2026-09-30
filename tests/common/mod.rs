@@ -51,10 +51,7 @@ pub fn git_out(dir: &Path, args: &[&str]) -> String {
 /// Live workstream dir under an arbitrary project root, for tests that scaffold
 /// a project themselves (clone, init) rather than using TestRepo.
 pub fn ws_dir_in(root: &Path, name: &str) -> PathBuf {
-    root.join("worktrees")
-        .join(name)
-        .join(".local")
-        .join("workstream")
+    root.join("wt").join(name).join(".local").join("workstream")
 }
 
 pub fn archived_ws_dir_in(root: &Path, name: &str) -> PathBuf {
@@ -100,7 +97,7 @@ impl TestRepo {
         std::fs::write(root.join(".git"), "gitdir: ./.bare\n").unwrap();
 
         // Scaffold directories.
-        std::fs::create_dir_all(root.join("worktrees")).unwrap();
+        std::fs::create_dir_all(root.join("wt")).unwrap();
 
         TestRepo { _dir: dir, root }
     }

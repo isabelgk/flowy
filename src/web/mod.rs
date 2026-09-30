@@ -498,7 +498,7 @@ fn parse_route(method: &str, path: &str) -> Route {
 }
 
 // Route segments are percent-decoded, so a name can smuggle in `/`, `..`, or an
-// absolute path that `Path::join` would follow out of `worktrees/`.
+// absolute path that `Path::join` would follow out of `wt/`.
 fn is_single_component(name: &str) -> bool {
     let mut components = Path::new(name).components();
     matches!(

@@ -25,7 +25,7 @@ the reasoning behind everything already merged goes with it.
 Everything after the verb: `<workstream-name> [slug]`
 
 - `<workstream-name>`: if missing, default to the current git branch's workstream;
-  if cwd is not inside a worktree, list `<repo_root>/worktrees/` and ask which
+  if cwd is not inside a worktree, list `<repo_root>/wt/` and ask which
   one with `AskUserQuestion`.
 - `[slug]`: a short kebab-case name for the milestone. If omitted, derive one from
   the plan's goal and say what you chose.

@@ -5,7 +5,7 @@ pub fn safe_name(branch: &str) -> String {
 }
 
 // Clap value parser for a workstream name argument. Returns the safe name, since
-// that is what names the directory; `.` and `..` would resolve outside worktrees/.
+// that is what names the directory; `.` and `..` would resolve outside wt/.
 pub fn parse_workstream_name(raw: &str) -> Result<String, String> {
     let name = safe_name(raw);
     match name.as_str() {
@@ -69,7 +69,7 @@ mod tests {
         let root = PathBuf::from("/repo");
         assert_eq!(
             workstream_dir(&root, "my-branch"),
-            PathBuf::from("/repo/worktrees/my-branch/.local/workstream")
+            PathBuf::from("/repo/wt/my-branch/.local/workstream")
         );
     }
 
@@ -77,7 +77,7 @@ mod tests {
     fn workstream_subdir_matches_workstream_dir() {
         let root = PathBuf::from("/repo");
         assert_eq!(
-            workstream_subdir(&root.join("worktrees").join("my-branch")),
+            workstream_subdir(&root.join("wt").join("my-branch")),
             workstream_dir(&root, "my-branch")
         );
     }

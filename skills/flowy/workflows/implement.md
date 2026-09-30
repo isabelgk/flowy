@@ -8,7 +8,7 @@ ticket file as you go.
 Everything after the verb: `<workstream-name> [ticket-number]`
 
 - `<workstream-name>`: required. If missing, default to the current git branch's
-  workstream; if cwd is not inside a worktree, list `<repo_root>/worktrees/` and
+  workstream; if cwd is not inside a worktree, list `<repo_root>/wt/` and
   ask which one with `AskUserQuestion`.
 - `[ticket-number]`: the ticket to implement (`1`, `01`, `003` all match the
   leading number in the filename). If omitted, derive it from `next.md` per
