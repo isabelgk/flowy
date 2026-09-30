@@ -481,5 +481,8 @@ fn every_page_carries_the_sidebar_toggle() {
     assert!(page.contains("aria-controls=\"workstreams\""), "{page}");
     assert!(page.contains("id=\"workstreams\""), "{page}");
     // Applied before first paint, so a collapsed sidebar does not flash open.
-    assert!(page.contains("nav-collapsed"), "{page}");
+    // The stylesheet and the toggle script mention the class and key too, so
+    // look for the restore itself, inside <head>.
+    let head = page.split("</head>").next().unwrap();
+    assert!(head.contains("getItem('flowy-nav')"), "{page}");
 }
