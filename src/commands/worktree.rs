@@ -243,6 +243,9 @@ fn new(matches: &ArgMatches) -> Result<()> {
             .unwrap_or(false)
     };
     let branch_exists = ref_exists(&format!("refs/heads/{branch}"));
+    if branch_exists && let Some(sp) = start_point {
+        bail!("branch '{branch}' already exists; START_POINT '{sp}' only applies to a new branch");
+    }
     let on_origin = !branch_exists
         && start_point.is_none()
         && ref_exists(&format!("refs/remotes/origin/{branch}"));

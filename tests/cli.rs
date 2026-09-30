@@ -2703,3 +2703,15 @@ fn ticket_flags_reject_bad_combinations() {
         .failure()
         .stderr(predicate::str::contains("cannot be used with"));
 }
+
+#[test]
+fn wt_new_refuses_start_point_for_existing_branch() {
+    let repo = TestRepo::new();
+    git_in(&repo.root.join(".bare"), &["branch", "existing", "main"]);
+    repo.cmd()
+        .args(["wt", "new", "-b", "existing", "main"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already exists"));
+    assert!(!repo.root.join("worktrees").join("existing").exists());
+}
