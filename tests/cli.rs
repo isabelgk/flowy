@@ -2637,3 +2637,30 @@ fn t_priority_preserves_an_existing_ticket_body() {
     assert!(content.contains("status = \"pending\""));
     assert!(content.contains("Some details"));
 }
+
+#[test]
+fn workstream_name_rejects_dot_components() {
+    let repo = TestRepo::new();
+    for bad in [".", ".."] {
+        repo.cmd()
+            .args(["t", "ls", "-w", bad])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("not a valid workstream name"));
+        repo.cmd().args(["wt", "archive", bad]).assert().failure();
+    }
+}
+
+#[test]
+fn wt_new_reports_safe_name_collision() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "a/b"])
+        .assert()
+        .success();
+    repo.cmd()
+        .args(["wt", "new", "-b", "a-b"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("maps to workstream 'a-b'"));
+}

@@ -1,5 +1,6 @@
 use clap::{Arg, ArgAction, Command};
 
+use crate::core::names::parse_workstream_name;
 use crate::core::ticket::Priority;
 
 pub fn build() -> Command {
@@ -69,7 +70,12 @@ fn worktree_cmd() -> Command {
             Command::new("archive")
                 .visible_alias("ar")
                 .about("Archive a workstream and remove its worktree")
-                .arg(Arg::new("name").required(true).index(1))
+                .arg(
+                    Arg::new("name")
+                        .required(true)
+                        .index(1)
+                        .value_parser(parse_workstream_name),
+                )
                 .arg(
                     Arg::new("force")
                         .long("force")
@@ -82,7 +88,12 @@ fn worktree_cmd() -> Command {
             Command::new("unarchive")
                 .visible_alias("un")
                 .about("Restore an archived workstream")
-                .arg(Arg::new("name").required(true).index(1)),
+                .arg(
+                    Arg::new("name")
+                        .required(true)
+                        .index(1)
+                        .value_parser(parse_workstream_name),
+                ),
         )
         .subcommand(
             Command::new("rename")
@@ -92,7 +103,8 @@ fn worktree_cmd() -> Command {
                     Arg::new("old")
                         .required(true)
                         .index(1)
-                        .value_name("OLD_NAME"),
+                        .value_name("OLD_NAME")
+                        .value_parser(parse_workstream_name),
                 )
                 .arg(
                     Arg::new("new-branch")
@@ -114,6 +126,7 @@ fn ticket_cmd() -> Command {
                 .long("workstream")
                 .global(true)
                 .value_name("NAME")
+                .value_parser(parse_workstream_name)
                 .help("Workstream name (default: inferred from git branch)"),
         )
         .subcommand(
@@ -250,6 +263,7 @@ fn notes_cmd() -> Command {
                 .long("workstream")
                 .global(true)
                 .value_name("NAME")
+                .value_parser(parse_workstream_name)
                 .help("Workstream name (default: inferred from git branch)"),
         )
         .subcommand(

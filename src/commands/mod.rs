@@ -70,7 +70,7 @@ pub fn get_repo_root(matches: &ArgMatches) -> Result<PathBuf> {
 // error, since writing there would create a stray `worktrees/<name>/`.
 pub fn resolve_workstream(matches: &ArgMatches, root: &Path) -> Result<(String, PathBuf)> {
     let name = if let Some(n) = matches.get_one::<String>("workstream") {
-        safe_name(n)
+        n.clone()
     } else if let Some(name) = cwd_worktree(root) {
         name
     } else {

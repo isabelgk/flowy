@@ -223,6 +223,13 @@ fn new(matches: &ArgMatches) -> Result<()> {
 
     let name = safe_name(branch);
     let worktree_path = worktrees_dir(&root).join(&name);
+    // `a/b` and `a-b` share a directory; say so rather than surface git's error.
+    if worktree_path.exists() {
+        bail!(
+            "worktree directory {} already exists; branch '{branch}' maps to workstream '{name}'",
+            worktree_path.display()
+        );
+    }
 
     // Self-heal repos scaffolded before workstream notes moved into the worktree.
     ensure_local_excluded(&root)?;
