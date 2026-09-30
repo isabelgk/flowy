@@ -295,7 +295,8 @@ pub struct WorktreeInfo {
     pub path: PathBuf,
     pub branch: String,
     pub dirty: bool,
-    pub age_seconds: i64,
+    // None when HEAD has no commit (unborn branch) or git could not report one.
+    pub age_seconds: Option<i64>,
     pub tickets_pending: usize,
     pub tickets_total: usize,
 }
@@ -316,8 +317,8 @@ pub fn list_worktrees(root: &Path) -> Result<Vec<WorktreeInfo>> {
     Ok(result)
 }
 
-pub fn format_age(age_seconds: i64) -> String {
-    format_age_inner(age_seconds)
+pub fn format_age(age_seconds: Option<i64>) -> String {
+    age_seconds.map_or_else(|| "-".to_string(), format_age_inner)
 }
 
 fn ls(matches: &ArgMatches) -> Result<()> {
@@ -355,7 +356,7 @@ fn ls(matches: &ArgMatches) -> Result<()> {
         table.add_row([
             branch_cell,
             dirty_cell,
-            Cell::new(format_age_inner(wt.age_seconds)),
+            Cell::new(format_age(wt.age_seconds)),
             tickets_label,
         ]);
     }
@@ -466,15 +467,15 @@ fn compute_worktree_entry(
 
     // Use cached commit timestamp if HEAD hasn't moved; else re-fetch from git.
     let commit_ts = match &head_sha {
-        Some(sha) if *sha == entry.head_sha => entry.commit_ts,
+        Some(sha) if *sha == entry.head_sha && entry.commit_ts.is_some() => entry.commit_ts,
         _ => {
-            let ts = commit_timestamp(&path).unwrap_or(0);
+            let ts = commit_timestamp(&path);
             entry.head_sha = head_sha.unwrap_or_default();
             entry.commit_ts = ts;
             ts
         }
     };
-    let age_seconds = (chrono::Utc::now().timestamp() - commit_ts).max(0);
+    let age_seconds = commit_ts.map(|ts| (chrono::Utc::now().timestamp() - ts).max(0));
 
     let fingerprint = tickets_fingerprint(&ws_dir);
     let (tickets_pending, tickets_total) =
@@ -616,20 +617,17 @@ fn is_dirty(path: &Path) -> Result<bool> {
     Ok(!out.stdout.is_empty())
 }
 
-fn commit_timestamp(path: &Path) -> Result<i64> {
+// None on an unborn HEAD or any git failure.
+fn commit_timestamp(path: &Path) -> Option<i64> {
     let out = Command::new("git")
         .args(["log", "-1", "--format=%ct", "HEAD"])
         .current_dir(path)
         .output()
-        .context("running git log")?;
-
-    let ts_str = String::from_utf8_lossy(&out.stdout);
-    let ts_str = ts_str.trim();
-    if ts_str.is_empty() {
-        return Ok(0);
+        .ok()?;
+    if !out.status.success() {
+        return None;
     }
-
-    ts_str.parse().context("parsing commit timestamp")
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
 }
 
 fn format_age_inner(age_seconds: i64) -> String {
@@ -1049,42 +1047,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unborn_head_has_no_age() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let status = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert_eq!(commit_timestamp(dir.path()), None);
+        assert_eq!(format_age(None), "-");
+    }
+
+    #[test]
     fn format_age_under_minute_is_now() {
-        assert_eq!(format_age(0), "now");
-        assert_eq!(format_age(59), "now");
-        assert_eq!(format_age(-10), "now");
+        assert_eq!(format_age_inner(0), "now");
+        assert_eq!(format_age_inner(59), "now");
+        assert_eq!(format_age_inner(-10), "now");
     }
 
     #[test]
     fn format_age_minutes() {
-        assert_eq!(format_age(60), "1m");
-        assert_eq!(format_age(3599), "59m");
+        assert_eq!(format_age_inner(60), "1m");
+        assert_eq!(format_age_inner(3599), "59m");
     }
 
     #[test]
     fn format_age_hours() {
-        assert_eq!(format_age(3600), "1h");
-        assert_eq!(format_age(86399), "23h");
+        assert_eq!(format_age_inner(3600), "1h");
+        assert_eq!(format_age_inner(86399), "23h");
     }
 
     #[test]
     fn format_age_days() {
-        assert_eq!(format_age(86400), "1d");
-        assert_eq!(format_age(7 * 86400 - 1), "6d");
+        assert_eq!(format_age_inner(86400), "1d");
+        assert_eq!(format_age_inner(7 * 86400 - 1), "6d");
     }
 
     #[test]
     fn format_age_weeks() {
-        assert_eq!(format_age(7 * 86400), "1w");
+        assert_eq!(format_age_inner(7 * 86400), "1w");
     }
 
     #[test]
     fn format_age_months() {
-        assert_eq!(format_age(30 * 86400), "1mo");
+        assert_eq!(format_age_inner(30 * 86400), "1mo");
     }
 
     #[test]
     fn format_age_years() {
-        assert_eq!(format_age(365 * 86400), "1y");
+        assert_eq!(format_age_inner(365 * 86400), "1y");
     }
 }

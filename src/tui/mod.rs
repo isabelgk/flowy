@@ -612,7 +612,7 @@ mod tests {
             path: worktree,
             branch: "feat/bar".to_string(),
             dirty: false,
-            age_seconds: 0,
+            age_seconds: Some(0),
             tickets_pending: 1,
             tickets_total: 1,
         }]);
