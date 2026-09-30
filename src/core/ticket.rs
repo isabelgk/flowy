@@ -280,6 +280,12 @@ pub fn create_ticket(
     priority: Option<Priority>,
     body: Option<&str>,
 ) -> Result<(u32, PathBuf)> {
+    // TOML would store a newline as a multi-line string, whose lines the
+    // line-based frontmatter rewrites and the `+++` delimiter search would then
+    // read as keys and delimiters of their own.
+    if title.contains(['\n', '\r']) {
+        bail!("a ticket title must be a single line");
+    }
     let tickets_dir = workstream_dir.join("tickets");
     std::fs::create_dir_all(&tickets_dir)
         .with_context(|| format!("creating {}", tickets_dir.display()))?;
@@ -784,6 +790,18 @@ mod create_tests {
         let (n2, _) = create_ticket(dir.path(), "Second", None, Some("Body.")).unwrap();
         assert_eq!((n1, n2), (1, 2));
         assert!(p1.ends_with("001.md"));
+    }
+
+    #[test]
+    fn create_ticket_refuses_a_multi_line_title() {
+        let dir = tempfile::tempdir().unwrap();
+        for title in ["one\n+++\ntwo", "one\nstatus = \"complete\"", "a\rb"] {
+            assert!(
+                create_ticket(dir.path(), title, None, None).is_err(),
+                "{title:?}"
+            );
+        }
+        assert!(!dir.path().join("tickets/001.md").exists());
     }
 
     #[test]
