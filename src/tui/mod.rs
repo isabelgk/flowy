@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
@@ -14,8 +14,11 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use crate::commands::worktree::{WorktreeInfo, list_worktrees};
 use crate::core::{
     names::{workstream_dir, workstream_subdir},
+    notes::append_log,
     repo::cwd_worktree,
-    ticket::{Priority, Status, load_tickets, ticket_path, write_priority},
+    ticket::{
+        Priority, Status, load_tickets, rewrite_status_and_append, ticket_path, write_priority,
+    },
 };
 
 mod ui;
@@ -197,7 +200,7 @@ impl App {
                 KeyCode::Char('p') => {
                     if let Some(&idx) = filtered.get(self.ticket_selected) {
                         let new_priority = next_priority(self.tickets[idx].priority);
-                        if write_priority(&self.tickets[idx].path, new_priority).is_ok() {
+                        if write_ticket_priority(&self.tickets[idx], new_priority).is_ok() {
                             self.tickets[idx].priority = new_priority;
                         }
                     }
@@ -205,8 +208,7 @@ impl App {
                 KeyCode::Char('s') => {
                     if let Some(&idx) = filtered.get(self.ticket_selected) {
                         let new_status = next_status(&self.tickets[idx].status);
-                        let path = self.tickets[idx].path.clone();
-                        if write_ticket_status(&path, &new_status).is_ok() {
+                        if write_ticket_status(&self.tickets[idx], &new_status).is_ok() {
                             self.tickets[idx].status = new_status;
                         }
                     }
@@ -316,38 +318,39 @@ fn next_status(status: &Status) -> Status {
     }
 }
 
-fn write_ticket_status(path: &Path, new_status: &Status) -> Result<()> {
-    let raw = std::fs::read_to_string(path)?;
-    let stripped = raw
-        .strip_prefix("+++\n")
-        .ok_or_else(|| anyhow::anyhow!("missing frontmatter"))?;
-    let end = stripped
-        .find("\n+++\n")
-        .ok_or_else(|| anyhow::anyhow!("malformed frontmatter"))?;
-
-    let fm = &stripped[..end];
-    let body = &stripped[end + 5..];
-
-    let status_str = match new_status {
-        Status::Pending => "pending",
-        Status::Complete => "complete",
-        Status::WontImplement => "wont-implement",
+// Logs to status.md alongside the write, as the CLI and web UI do.
+fn write_ticket_status(ticket: &TuiTicket, new_status: &Status) -> Result<()> {
+    let (reopen, wont_impl, action) = match new_status {
+        Status::Pending => (true, false, "reopen"),
+        Status::Complete => (false, false, "done"),
+        Status::WontImplement => (false, true, "wont-implement"),
     };
+    let path = &ticket.path;
+    let content =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let updated = rewrite_status_and_append(&content, reopen, wont_impl, None);
+    std::fs::write(path, updated).with_context(|| format!("writing {}", path.display()))?;
+    append_log(
+        ticket_ws_dir(ticket)?,
+        &format!("{action} {:03}", ticket.number),
+    )
+}
 
-    let new_fm: String = fm
-        .lines()
-        .map(|line| {
-            if line.trim_start().starts_with("status") {
-                format!("status = \"{status_str}\"")
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+fn write_ticket_priority(ticket: &TuiTicket, priority: Priority) -> Result<()> {
+    write_priority(&ticket.path, priority)?;
+    append_log(
+        ticket_ws_dir(ticket)?,
+        &format!("priority {:03} {}", ticket.number, priority.as_str()),
+    )
+}
 
-    std::fs::write(path, format!("+++\n{new_fm}\n+++\n{body}"))?;
-    Ok(())
+// Ticket paths are `<ws_dir>/tickets/<n>.md`.
+fn ticket_ws_dir(ticket: &TuiTicket) -> Result<&Path> {
+    ticket
+        .path
+        .parent()
+        .and_then(Path::parent)
+        .with_context(|| format!("no workstream above {}", ticket.path.display()))
 }
 
 fn load_tui_tickets(ws_dir: &Path) -> Vec<TuiTicket> {
@@ -457,6 +460,52 @@ fn run_loop(
 mod tests {
     use super::*;
     use ratatui::backend::TestBackend;
+
+    fn ticket_on_disk(frontmatter: &str) -> (tempfile::TempDir, TuiTicket) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = ticket_path(dir.path(), 1);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, format!("+++\n{frontmatter}\n+++\n\nBody.\n")).unwrap();
+        let ticket = TuiTicket {
+            number: 1,
+            title: "T".to_string(),
+            status: Status::Pending,
+            priority: Priority::Medium,
+            content: String::new(),
+            path,
+        };
+        (dir, ticket)
+    }
+
+    #[test]
+    fn status_write_leaves_similar_keys_alone_and_logs() {
+        let (dir, ticket) =
+            ticket_on_disk("status = \"pending\"\nstatus_note = \"x\"\ntitle = \"T\"");
+        write_ticket_status(&ticket, &Status::Complete).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&ticket.path).unwrap(),
+            "+++\nstatus = \"complete\"\nstatus_note = \"x\"\ntitle = \"T\"\n+++\n\nBody.\n"
+        );
+        let log = std::fs::read_to_string(dir.path().join("status.md")).unwrap();
+        assert!(log.contains("done 001"), "{log}");
+    }
+
+    #[test]
+    fn status_write_adds_a_missing_key() {
+        let (_dir, ticket) = ticket_on_disk("title = \"T\"");
+        write_ticket_status(&ticket, &Status::WontImplement).unwrap();
+        let written = std::fs::read_to_string(&ticket.path).unwrap();
+        assert!(written.contains("status = \"wont-implement\""), "{written}");
+    }
+
+    #[test]
+    fn priority_write_logs() {
+        let (dir, ticket) = ticket_on_disk("status = \"pending\"\ntitle = \"T\"");
+        write_ticket_priority(&ticket, Priority::High).unwrap();
+        let log = std::fs::read_to_string(dir.path().join("status.md")).unwrap();
+        assert!(log.contains("priority 001 high"), "{log}");
+    }
 
     // 80x22 puts 16 rows inside the ticket list block, so a half page is 8.
     const TERM_WIDTH: u16 = 80;
