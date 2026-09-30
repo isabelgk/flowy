@@ -819,54 +819,97 @@ fn move_worktree(root: &Path, old: &Path, new: &Path) -> Result<()> {
         .arg(old)
         .arg(new)
         .current_dir(root.join(".bare"))
-        .status()
+        .output()
         .context("running git worktree move")?;
-    if moved.success() {
+    if moved.status.success() {
         return Ok(());
     }
+    let git_error = String::from_utf8_lossy(&moved.stderr).trim().to_string();
 
-    // git refuses to move a worktree containing submodules, and the check is on
-    // the gitlinks in the tree (not on init state), so deinit alone won't let
-    // `git worktree move` succeed. Move it by hand and fix the admin pointers.
-    deinit_submodules(old);
+    // git refuses to move a worktree containing submodules, and that is the only
+    // refusal worth working around; a lock, for one, has to stay honored.
+    let submodules = submodule_git_dirs(old)?;
+    if submodules.is_empty() || admin_dir(old)?.join("locked").exists() {
+        bail!("git worktree move failed: {git_error}");
+    }
+
+    // Moving the tree as-is keeps untracked and uncommitted submodule work. The
+    // submodules' own `.git` files are relative and stay at the same depth, so
+    // only the admin pointer and each submodule's core.worktree go stale.
     std::fs::rename(old, new)
         .with_context(|| format!("moving {} to {}", old.display(), new.display()))?;
     repair_worktree_gitdir(new)?;
-
-    // Restore submodule working trees; this also refreshes each core.worktree.
-    let status = Command::new("git")
-        .args(["submodule", "update", "--init", "--recursive"])
-        .current_dir(new)
-        .status()
-        .context("running git submodule update --init --recursive")?;
-    if !status.success() {
-        bail!("git submodule update --init --recursive failed after manual move");
+    for (path, git_dir) in submodules {
+        let status = Command::new("git")
+            .args(["config", "--file"])
+            .arg(git_dir.join("config"))
+            .arg("core.worktree")
+            .arg(new.join(&path))
+            .status()
+            .context("running git config core.worktree")?;
+        if !status.success() {
+            bail!("updating core.worktree for submodule {path} failed");
+        }
     }
     Ok(())
 }
 
-fn deinit_submodules(worktree: &Path) {
-    // Best-effort: a repo with no submodules has nothing to deinit.
-    let _ = Command::new("git")
-        .args(["submodule", "deinit", "--all", "-f"])
+// (path relative to the worktree, absolute git dir) for every checked-out
+// submodule, nested ones included.
+fn submodule_git_dirs(worktree: &Path) -> Result<Vec<(String, PathBuf)>> {
+    let out = Command::new("git")
+        .args([
+            "submodule",
+            "foreach",
+            "--quiet",
+            "--recursive",
+            "echo \"$displaypath\"",
+        ])
         .current_dir(worktree)
-        .status();
+        .output()
+        .context("running git submodule foreach")?;
+    if !out.status.success() {
+        bail!(
+            "listing submodules failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|path| {
+            let git_dir = Command::new("git")
+                .args(["rev-parse", "--absolute-git-dir"])
+                .current_dir(worktree.join(path))
+                .output()
+                .with_context(|| format!("resolving the git dir of submodule {path}"))?;
+            if !git_dir.status.success() {
+                bail!("resolving the git dir of submodule {path} failed");
+            }
+            let git_dir = String::from_utf8_lossy(&git_dir.stdout).trim().to_string();
+            Ok((path.to_string(), PathBuf::from(git_dir)))
+        })
+        .collect()
+}
+
+// The worktree's admin dir under .bare/worktrees/<id>, read from its .git file.
+fn admin_dir(worktree: &Path) -> Result<PathBuf> {
+    let git_file = worktree.join(".git");
+    let content = std::fs::read_to_string(&git_file)
+        .with_context(|| format!("reading {}", git_file.display()))?;
+    content
+        .lines()
+        .find_map(|l| l.strip_prefix("gitdir: "))
+        .map(|p| PathBuf::from(p.trim()))
+        .with_context(|| format!("no gitdir pointer in {}", git_file.display()))
 }
 
 fn repair_worktree_gitdir(new_worktree: &Path) -> Result<()> {
     // The worktree's own .git file points (absolutely) at its admin dir under
     // .bare/worktrees/<id>, unaffected by the move. Only the reverse pointer
     // (admin/gitdir -> worktree/.git) still names the pre-move path.
+    let pointer = admin_dir(new_worktree)?.join("gitdir");
     let git_file = new_worktree.join(".git");
-    let content = std::fs::read_to_string(&git_file)
-        .with_context(|| format!("reading {}", git_file.display()))?;
-    let admin_dir = content
-        .lines()
-        .find_map(|l| l.strip_prefix("gitdir: "))
-        .map(|p| PathBuf::from(p.trim()))
-        .with_context(|| format!("no gitdir pointer in {}", git_file.display()))?;
-
-    let pointer = admin_dir.join("gitdir");
     std::fs::write(&pointer, format!("{}\n", git_file.display()))
         .with_context(|| format!("writing {}", pointer.display()))
 }

@@ -1231,22 +1231,24 @@ fn wt_rename_moves_worktree_with_submodule() {
         ],
     );
     git_in(&old_wt, &["commit", "-m", "add submodule"]);
+    std::fs::write(old_wt.join("sub").join("wip.txt"), "unsaved\n").unwrap();
 
-    // Propagate the same allowance to the tool's own `submodule update`.
     repo.cmd()
-        .env("GIT_CONFIG_COUNT", "1")
-        .env("GIT_CONFIG_KEY_0", "protocol.file.allow")
-        .env("GIT_CONFIG_VALUE_0", "always")
         .args(["wt", "rename", "feat-sub", "feat/renamed"])
         .assert()
         .success();
 
     let new_wt = repo.root.join("worktrees").join("feat-renamed");
     assert!(!old_wt.exists(), "old worktree dir should be gone");
-    assert!(
-        new_wt.join("sub").join(".git").exists(),
-        "submodule should be restored at the new path"
+    assert_eq!(
+        std::fs::read_to_string(new_wt.join("sub").join("wip.txt")).unwrap(),
+        "unsaved\n",
+        "untracked submodule work should move with the worktree"
     );
+
+    // The submodule's core.worktree follows the move.
+    let sub_status = git_out(&new_wt.join("sub"), &["status", "--porcelain"]);
+    assert_eq!(sub_status.trim(), "?? wip.txt");
 
     // git tracks the worktree at its new path only.
     let list = git_out(&repo.root, &["worktree", "list", "--porcelain"]);
@@ -1266,6 +1268,25 @@ fn wt_rename_moves_worktree_with_submodule() {
             .branch,
         "feat/renamed"
     );
+}
+
+#[test]
+fn wt_rename_honors_a_worktree_lock() {
+    let repo = TestRepo::new();
+    repo.cmd()
+        .args(["wt", "new", "-b", "feat/locked"])
+        .assert()
+        .success();
+    let old_wt = repo.root.join("worktrees").join("feat-locked");
+    git_in(&old_wt, &["worktree", "lock", old_wt.to_str().unwrap()]);
+
+    repo.cmd()
+        .args(["wt", "rename", "feat-locked", "feat/moved"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("locked"));
+    assert!(old_wt.exists());
+    assert!(!repo.root.join("worktrees").join("feat-moved").exists());
 }
 
 #[test]
