@@ -55,7 +55,7 @@ fn t_add_creates_ticket_with_h1() {
 
     let ticket = ws_dir_in(&repo.root, "test-branch")
         .join("tickets")
-        .join("001.md");
+        .join("1.md");
     assert!(ticket.exists(), "ticket file should exist");
     let content = fs::read_to_string(&ticket).unwrap();
     assert!(content.starts_with("+++\n"));
@@ -81,7 +81,7 @@ fn t_done_rewrites_heading_and_appends_summary() {
 
     let ticket = ws_dir_in(&repo.root, "test-branch")
         .join("tickets")
-        .join("001.md");
+        .join("1.md");
     let content = fs::read_to_string(&ticket).unwrap();
     assert!(
         content.contains("status = \"complete\""),
@@ -1260,7 +1260,7 @@ fn t_done_summary_not_duplicated_on_second_call() {
         .assert()
         .success();
 
-    let ticket_path = ws_dir_in(&repo.root, "feat").join("tickets").join("001.md");
+    let ticket_path = ws_dir_in(&repo.root, "feat").join("tickets").join("1.md");
     let content = fs::read_to_string(&ticket_path).unwrap();
     assert_eq!(
         content.matches("## Summary").count(),
@@ -1671,7 +1671,7 @@ fn migrate_moves_notes_into_worktree() {
 
     assert!(!old.exists(), "old notes dir should be gone");
     assert!(
-        repo.ticket("legacy", 1).exists(),
+        repo.ws_dir("legacy").join("tickets/001.md").exists(),
         "ticket should land inside the worktree"
     );
     assert_eq!(
@@ -1766,7 +1766,7 @@ fn migrate_leaves_archive_alone_and_is_idempotent() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Nothing to migrate"));
-    assert!(repo.ticket("legacy", 1).exists());
+    assert!(repo.ws_dir("legacy").join("tickets/001.md").exists());
 }
 
 #[test]
@@ -2327,7 +2327,7 @@ fn notes_milestone_freezes_the_plan_and_keeps_tickets() {
     assert_eq!(json["slug"], "no-lua");
     assert_eq!(json["pending_tickets"], 0);
 
-    let dir = ws.join("milestones").join("001-no-lua");
+    let dir = ws.join("milestones").join("1-no-lua");
     assert_eq!(
         fs::read_to_string(dir.join("planning.md")).unwrap(),
         "the plan\n"
@@ -2345,7 +2345,7 @@ fn notes_milestone_freezes_the_plan_and_keeps_tickets() {
     assert!(
         fs::read_to_string(ws.join("status.md"))
             .unwrap()
-            .contains("milestone 001-no-lua frozen")
+            .contains("milestone 1-no-lua frozen")
     );
 }
 
@@ -2363,7 +2363,7 @@ fn notes_milestone_numbers_past_the_highest() {
         .assert()
         .success();
 
-    assert!(ws.join("milestones").join("002-second").is_dir());
+    assert!(ws.join("milestones").join("2-second").is_dir());
 }
 
 #[test]
@@ -2626,7 +2626,7 @@ fn t_edit_runs_editor_with_arguments() {
 
     let ticket = ws_dir_in(&repo.root, "test-branch")
         .join("tickets")
-        .join("001.md");
+        .join("1.md");
     assert!(fs::read_to_string(ticket).unwrap().contains("Your ticket"));
 }
 

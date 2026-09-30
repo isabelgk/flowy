@@ -244,9 +244,7 @@ pub fn load_tickets(workstream_dir: &Path) -> Result<Vec<Ticket>> {
 // Where a new ticket numbered `number` is created. An existing ticket's file is
 // `Ticket::path`, which may be named differently.
 pub fn ticket_path(workstream_dir: &Path, number: u32) -> PathBuf {
-    workstream_dir
-        .join("tickets")
-        .join(format!("{number:03}.md"))
+    workstream_dir.join("tickets").join(format!("{number}.md"))
 }
 
 pub fn resolve_ticket<'a>(tickets: &'a [Ticket], id: &str) -> Result<&'a Ticket> {
@@ -570,7 +568,7 @@ mod tests {
             status: Status::Pending,
             priority: Priority::Medium,
             content: String::new(),
-            path: PathBuf::from(format!("{number:03}.md")),
+            path: PathBuf::from(format!("{number}.md")),
         }
     }
 
@@ -787,7 +785,7 @@ mod create_tests {
         let (n1, p1) = create_ticket(dir.path(), "First", None, None).unwrap();
         let (n2, _) = create_ticket(dir.path(), "Second", None, Some("Body.")).unwrap();
         assert_eq!((n1, n2), (1, 2));
-        assert!(p1.ends_with("001.md"));
+        assert!(p1.ends_with("1.md"));
     }
 
     #[test]
@@ -821,9 +819,10 @@ mod create_tests {
         std::fs::create_dir_all(dir.path().join("tickets")).unwrap();
         std::fs::write(dir.path().join("tickets/001.md"), "no frontmatter\n").unwrap();
 
-        let (number, _) = create_ticket(dir.path(), "New", None, None).unwrap();
+        let (number, path) = create_ticket(dir.path(), "New", None, None).unwrap();
 
         assert_eq!(number, 2);
+        assert!(path.ends_with("tickets/2.md"), "{}", path.display());
         assert_eq!(
             std::fs::read_to_string(dir.path().join("tickets/001.md")).unwrap(),
             "no frontmatter\n"

@@ -211,7 +211,7 @@ pub fn ticket_list(nav: &Nav, workstream: &str, tickets: &[Ticket], filters: &Fi
                 tbody {
                     @for t in tickets {
                         tr {
-                            td.num { a href={ (ws_url(workstream)) "/t/" (t.number) } { (format!("{:03}", t.number)) } }
+                            td.num { a href={ (ws_url(workstream)) "/t/" (t.number) } { (t.number) } }
                             td { a href={ (ws_url(workstream)) "/t/" (t.number) } { (t.title) } }
                             td { span class=(priority_class(t.priority)) { (t.priority.as_str()) } }
                             td { span class=(status_class(&t.status)) { (status_label(&t.status)) } }
@@ -256,7 +256,7 @@ pub fn ticket_detail(nav: &Nav, workstream: &str, ticket: &Ticket) -> Markup {
     let content = html! {
         .card {
             .ticket-head {
-                h1 { (format!("{:03}", ticket.number)) " " (ticket.title) }
+                h1 { (ticket.number) " " (ticket.title) }
                 span class=(status_class(&ticket.status)) { (status_label(&ticket.status)) }
                 span class=(priority_class(ticket.priority)) { (ticket.priority.as_str()) }
             }
@@ -305,11 +305,7 @@ pub fn ticket_detail(nav: &Nav, workstream: &str, ticket: &Ticket) -> Markup {
 
         p { a href={ (ws_url(workstream)) } { "Back to " (workstream) } }
     };
-    page(
-        &format!("{:03} {}", ticket.number, ticket.title),
-        nav,
-        content,
-    )
+    page(&format!("{} {}", ticket.number, ticket.title), nav, content)
 }
 
 pub fn ticket_edit(
@@ -322,7 +318,7 @@ pub fn ticket_edit(
     let action = format!("{}/t/{}/body", ws_url(workstream), ticket.number);
     let content = html! {
         .card {
-            h1 { "Edit " (format!("{:03}", ticket.number)) " " (ticket.title) }
+            h1 { "Edit " (ticket.number) " " (ticket.title) }
             @if conflict {
                 p.conflict {
                     "This ticket changed on disk since the editor was opened, so nothing was saved. \

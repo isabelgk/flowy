@@ -193,7 +193,7 @@ fn posting_a_ticket_writes_it_to_disk() {
     assert!(written.contains("Body with **markdown**."), "{written}");
 
     let log = std::fs::read_to_string(repo.ws_dir("feat-web").join("status.md")).expect("log");
-    assert!(log.contains("added 001 (Filed from the browser)"), "{log}");
+    assert!(log.contains("added 1 (Filed from the browser)"), "{log}");
 }
 
 #[test]
@@ -249,7 +249,7 @@ fn a_workstream_name_cannot_escape_the_worktrees_dir() {
     let absolute = form_urlencoded::byte_serialize(outside.path().to_str().unwrap().as_bytes())
         .collect::<String>()
         .replace('+', "%20");
-    let target = outside.path().join(".local/workstream/tickets/001.md");
+    let target = outside.path().join(".local/workstream/tickets/1.md");
     for name in [absolute.as_str(), "..%2Fworktrees%2Ffeat-web"] {
         let body = form(&[("title", "Escaped")]);
         let (status, _) = server.post(&format!("/w/{name}/tickets"), &body);

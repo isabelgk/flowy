@@ -2,7 +2,7 @@
 
 A **milestone** is one plan carried to its goal. When the queue drains and the
 goal is reached but the branch has more to do, the plan and its rolling
-recommendation are frozen under `milestones/<nnn>-<slug>/` beside a written
+recommendation are frozen under `milestones/<n>-<slug>/` beside a written
 summary, and the workstream starts a fresh plan on the same branch and worktree.
 
 This exists because `plan` overwrites `planning.md`. Without a milestone step,
@@ -67,7 +67,7 @@ Everything after the verb: `<workstream-name> [slug]`
    flowy --json notes milestone -w <workstream-name> <slug>
    ```
 
-   This picks the next number, creates `milestones/<nnn>-<slug>/`, moves
+   This picks the next number, creates `milestones/<n>-<slug>/`, moves
    `planning.md` and `next.md` into it, and appends the boundary line to
    `status.md`. It moves rather than copies: two live copies of a finished plan is
    the confusion this whole step exists to prevent, and the next `plan` run would
@@ -87,7 +87,7 @@ Everything after the verb: `<workstream-name> [slug]`
    for something a reader needs:
 
    ```bash
-   flowy notes write -w <workstream-name> milestones/<nnn>-<slug>/summary.md <<'EOF'
+   flowy notes write -w <workstream-name> milestones/<n>-<slug>/summary.md <<'EOF'
    # Milestone <n>: <goal, in a phrase>
 
    Opened <date>, closed <date>. Branch `<branch>`, ending at `<hash>`.
@@ -120,7 +120,7 @@ Everything after the verb: `<workstream-name> [slug]`
 5. **Leave `tickets/` where it is.** Every milestone's tickets stay in the one
    directory under one numbering sequence: the plans and the journals cite those
    numbers constantly, and `flowy ticket add` numbers from the highest file it
-   finds, so moving them out restarts numbering at `001` and collides with
+   finds, so moving them out restarts numbering at `1` and collides with
    everything already written.
 
    `notes/`, `tools/`, `archive/` and anything else useful past one plan stay too.

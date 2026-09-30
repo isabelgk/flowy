@@ -544,7 +544,7 @@ fn no_ticket(app: &App, name: &str, number: u32) -> Reply {
         render::message(
             &app.nav(Some(name)),
             "No such ticket",
-            &format!("{name} has no ticket {number:03}."),
+            &format!("{name} has no ticket {number}."),
         ),
     )
 }

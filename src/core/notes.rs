@@ -114,7 +114,7 @@ pub fn milestones_dir(ws_dir: &Path) -> PathBuf {
     ws_dir.join("milestones")
 }
 
-// One past the highest `<nnn>-<slug>` directory present. Names that do not
+// One past the highest `<n>-<slug>` directory present. Names that do not
 // start with a number are ignored so a README or stray directory cannot stall
 // numbering.
 pub fn next_milestone_number(ws_dir: &Path) -> u32 {
@@ -150,7 +150,7 @@ pub fn slugify(raw: &str) -> Result<String> {
     Ok(slug)
 }
 
-// Freezes the current plan under `milestones/<nnn>-<slug>/`. The plan is moved
+// Freezes the current plan under `milestones/<n>-<slug>/`. The plan is moved
 // rather than copied: two live copies of a finished plan is the confusion the
 // milestone boundary exists to prevent, and the next planning run would
 // overwrite the top-level one anyway. The summary is left to the caller, and
@@ -164,7 +164,7 @@ pub fn freeze_milestone(ws_dir: &Path, slug: &str) -> Result<Milestone> {
     }
 
     let number = next_milestone_number(ws_dir);
-    let dir = milestones_dir(ws_dir).join(format!("{number:03}-{slug}"));
+    let dir = milestones_dir(ws_dir).join(format!("{number}-{slug}"));
     if dir.exists() {
         bail!("{} already exists", dir.display());
     }
@@ -181,7 +181,7 @@ pub fn freeze_milestone(ws_dir: &Path, slug: &str) -> Result<Milestone> {
         frozen.push(name.to_string());
     }
 
-    append_log(ws_dir, &format!("milestone {number:03}-{slug} frozen"))?;
+    append_log(ws_dir, &format!("milestone {number}-{slug} frozen"))?;
 
     Ok(Milestone {
         number,
@@ -325,7 +325,7 @@ mod tests {
         assert!(
             std::fs::read_to_string(ws.join("status.md"))
                 .unwrap()
-                .contains("milestone 001-no-lua frozen")
+                .contains("milestone 1-no-lua frozen")
         );
     }
 

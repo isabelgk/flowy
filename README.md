@@ -16,9 +16,9 @@ project/
       status.md                       # append-only activity log
       planning.md                     # the current plan, if there is one
       next.md                         # rolling recommendation
-      milestones/<nnn>-<slug>/        # a plan carried to its goal, frozen
+      milestones/<n>-<slug>/          # a plan carried to its goal, frozen
       tickets/
-        001.md                        # TOML frontmatter encodes status + priority
+        1.md                          # TOML frontmatter encodes status + priority
 ```
 
 A workstream's notes live inside the worktree they describe, so `cd`-ing into a
@@ -34,9 +34,10 @@ Ticket metadata lives in TOML frontmatter (`+++` delimiters) with `title`,
 `status`, and `priority` fields. Status values: `"pending"`, `"complete"`,
 `"wont-implement"`. Priority values: `"high"`, `"medium"`, `"low"`; a ticket with
 no `priority` key ranks as medium, so the field can stay absent.
-Ticket IDs are zero-padded three-digit numbers (`001`, `002`, ...), claimed
-atomically so that concurrent `ticket add` runs get distinct numbers rather than
-the last writer overwriting the rest.
+Ticket IDs are plain numbers (`1`, `2`, ...); files from older versions named
+`001.md` are read the same way. New numbers are claimed atomically so that
+concurrent `ticket add` runs get distinct numbers rather than the last writer
+overwriting the rest.
 
 ## Global options
 
@@ -133,10 +134,10 @@ to the current git branch, same as `ticket`.
 | `write <NAME>` | Write a note, replacing it if it exists |
 | `append <NAME>` | Append to a note, creating it if absent |
 | `log <TEXT>` | Append a timestamped entry to `status.md` |
-| `milestone <SLUG>` | Freeze `planning.md` and `next.md` under `milestones/<nnn>-<slug>/` |
+| `milestone <SLUG>` | Freeze `planning.md` and `next.md` under `milestones/<n>-<slug>/` |
 
 `NAME` is either an alias (`planning`, `next`, `status`, `meta`) or a path
-relative to the workstream directory (`milestones/001-parser/summary.md`).
+relative to the workstream directory (`milestones/1-parser/summary.md`).
 Absolute paths and `..` are refused: the workstream directory is the write
 boundary. `write` and `append` read the body from stdin unless `--body-file
 <PATH>` is given, create parent directories as needed, and refuse an empty body

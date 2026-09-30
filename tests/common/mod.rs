@@ -114,7 +114,7 @@ impl TestRepo {
     pub fn ticket(&self, name: &str, number: u32) -> PathBuf {
         self.ws_dir(name)
             .join("tickets")
-            .join(format!("{number:03}.md"))
+            .join(format!("{number}.md"))
     }
 
     pub fn cmd(&self) -> Command {

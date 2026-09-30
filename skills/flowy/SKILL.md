@@ -26,8 +26,8 @@ project/
       status.md                       # append-only activity log
       planning.md                     # narrative plan (written by `plan`)
       next.md                         # rolling recommendation (by `next`)
-      tickets/001.md                  # TOML frontmatter (+++): status, priority
-      milestones/001-<slug>/          # a finished plan, frozen (by `milestone`)
+      tickets/1.md                    # TOML frontmatter (+++): status, priority
+      milestones/1-<slug>/            # a finished plan, frozen (by `milestone`)
   .flowy/archive/<name>/              # archived workstreams, same shape
 ```
 
@@ -166,7 +166,7 @@ workstream's only chronology.
 
 **Ticket numbers are one sequence for the life of the workstream.** `flowy ticket
 add` numbers from the highest file in `tickets/`, so a directory emptied of its
-history restarts at `001` and collides with every number the plans and journals
+history restarts at `1` and collides with every number the plans and journals
 already cite. Nothing may move the highest-numbered ticket out of `tickets/` -
 which is why `milestone` freezes the plan and leaves the tickets where they are.
 
@@ -203,7 +203,7 @@ One or two sentences: what to do and why. Answer "what problem does this solve?"
 - Specific, observable outcome 2.
 
 ## Related tickets
-- 003: dependency or follow-on (only if it falls out naturally; omit if none)
+- 3: dependency or follow-on (only if it falls out naturally; omit if none)
 ```
 
 - **Scope** is always present and always includes a one-line motivation.

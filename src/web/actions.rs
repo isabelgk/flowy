@@ -44,7 +44,7 @@ pub fn body_hash(body: &str) -> String {
 
 fn read_ticket(ws_dir: &Path, number: u32) -> Result<(std::path::PathBuf, Ticket)> {
     let ticket = find_ticket(ws_dir, number)?
-        .ok_or_else(|| anyhow::anyhow!("no ticket {number:03} in this workstream"))?;
+        .ok_or_else(|| anyhow::anyhow!("no ticket {number} in this workstream"))?;
     Ok((ticket.path.clone(), ticket))
 }
 
@@ -65,7 +65,7 @@ pub fn add_ticket(ws_dir: &Path, form: &Form) -> Result<u32> {
         priority_field(form)?,
         form.filled("description"),
     )?;
-    append_log(ws_dir, &format!("added {number:03} ({title})"))?;
+    append_log(ws_dir, &format!("added {number} ({title})"))?;
     Ok(number)
 }
 
@@ -83,17 +83,14 @@ pub fn set_status(ws_dir: &Path, number: u32, form: &Form) -> Result<()> {
     let updated = rewrite_status_and_append(&content, status, form.filled("summary"));
     write_atomic(&path, updated).with_context(|| format!("writing {}", path.display()))?;
 
-    append_log(ws_dir, &format!("{} {number:03}", status.verb()))
+    append_log(ws_dir, &format!("{} {number}", status.verb()))
 }
 
 pub fn set_priority(ws_dir: &Path, number: u32, form: &Form) -> Result<()> {
     let priority = priority_field(form)?.ok_or_else(|| anyhow::anyhow!("no priority given"))?;
     let (path, _) = read_ticket(ws_dir, number)?;
     write_priority(&path, priority)?;
-    append_log(
-        ws_dir,
-        &format!("priority {number:03} {}", priority.as_str()),
-    )
+    append_log(ws_dir, &format!("priority {number} {}", priority.as_str()))
 }
 
 pub fn add_journal(ws_dir: &Path, number: u32, form: &Form) -> Result<()> {
@@ -126,7 +123,7 @@ pub fn set_body(ws_dir: &Path, number: u32, form: &Form) -> Result<BodySave> {
     let updated = rewrite_body(&content, form.get("body"))?;
     write_atomic(&path, updated).with_context(|| format!("writing {}", path.display()))?;
 
-    append_log(ws_dir, &format!("edited {number:03}"))?;
+    append_log(ws_dir, &format!("edited {number}"))?;
     Ok(BodySave::Saved)
 }
 

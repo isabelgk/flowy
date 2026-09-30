@@ -323,7 +323,7 @@ fn notes_cmd() -> Command {
         )
         .subcommand(
             Command::new("milestone")
-                .about("Freeze planning.md and next.md under milestones/<nnn>-<slug>/")
+                .about("Freeze planning.md and next.md under milestones/<n>-<slug>/")
                 .arg(Arg::new("slug").required(true).index(1)),
         )
 }

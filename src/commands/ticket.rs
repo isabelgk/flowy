@@ -105,7 +105,7 @@ fn print_ticket_table(section: &str, tickets: &[Ticket]) {
             Status::WontImplement => ("wont-implement", Color::DarkGrey),
         };
         table.add_row([
-            Cell::new(format!("{:03}", t.number)),
+            Cell::new(t.number.to_string()),
             Cell::new(&t.title),
             Cell::new(t.priority.as_str()).fg(priority_color(t.priority)),
             Cell::new(label).fg(color),
@@ -258,7 +258,7 @@ fn add(matches: &ArgMatches) -> Result<()> {
     let (_, ws_dir) = resolve_workstream(matches, &root)?;
     let (number, path) = create_ticket(&ws_dir, title, priority, body.as_deref())?;
 
-    append_log(&ws_dir, &format!("added {number:03} ({title})"))?;
+    append_log(&ws_dir, &format!("added {number} ({title})"))?;
 
     if json {
         return print_json(&serde_json::json!({
@@ -266,7 +266,7 @@ fn add(matches: &ArgMatches) -> Result<()> {
             "path": path.to_string_lossy(),
         }));
     }
-    println!("Created {number:03}");
+    println!("Created {number}");
     Ok(())
 }
 
@@ -295,7 +295,7 @@ fn done(matches: &ArgMatches) -> Result<()> {
     write_atomic(path, &new_content).with_context(|| format!("writing {}", path.display()))?;
 
     let action = status.verb();
-    append_log(&ws_dir, &format!("{action} {:03}", ticket.number))?;
+    append_log(&ws_dir, &format!("{action} {}", ticket.number))?;
 
     if json {
         return print_json(&serde_json::json!({
@@ -303,7 +303,7 @@ fn done(matches: &ArgMatches) -> Result<()> {
             "status": status,
         }));
     }
-    println!("{action} {:03}", ticket.number);
+    println!("{action} {}", ticket.number);
     Ok(())
 }
 
@@ -320,7 +320,7 @@ fn priority(matches: &ArgMatches) -> Result<()> {
     write_priority(&ticket.path, level)?;
     append_log(
         &ws_dir,
-        &format!("priority {:03} {}", ticket.number, level.as_str()),
+        &format!("priority {} {}", ticket.number, level.as_str()),
     )?;
 
     if json {
@@ -329,7 +329,7 @@ fn priority(matches: &ArgMatches) -> Result<()> {
             "priority": level,
         }));
     }
-    println!("priority {:03} {}", ticket.number, level.as_str());
+    println!("priority {} {}", ticket.number, level.as_str());
     Ok(())
 }
 
@@ -358,7 +358,7 @@ fn journal(matches: &ArgMatches) -> Result<()> {
             "appended_at": ts,
         }));
     }
-    println!("Journal entry added to {:03}", ticket.number);
+    println!("Journal entry added to {}", ticket.number);
     Ok(())
 }
 
@@ -458,7 +458,7 @@ fn show_scored_results(results: &[(&SearchTicket, u32)], query: &str) {
         indices.dedup();
 
         let highlighted = highlight_title(&t.title, &indices);
-        println!("{:03} {} {}", t.number, highlighted, t.workstream.dimmed());
+        println!("{:>3} {} {}", t.number, highlighted, t.workstream.dimmed());
     }
 }
 
@@ -512,9 +512,9 @@ fn interactive_search(tickets: &[SearchTicket]) -> Result<Option<(String, u32, S
 
         for (i, (t, _)) in results.iter().take(max_show).enumerate() {
             if i == selected {
-                write!(out, "> {:03} {} ({})\r\n", t.number, t.title, t.workstream)?;
+                write!(out, "> {:>3} {} ({})\r\n", t.number, t.title, t.workstream)?;
             } else {
-                write!(out, "  {:03} {} ({})\r\n", t.number, t.title, t.workstream)?;
+                write!(out, "  {:>3} {} ({})\r\n", t.number, t.title, t.workstream)?;
             }
         }
         out.flush()?;
@@ -587,7 +587,7 @@ fn search(matches: &ArgMatches) -> Result<()> {
             return print_search_json(&results);
         }
         for (t, _) in &results {
-            println!("{:03} {} ({})", t.number, t.title, t.workstream);
+            println!("{} {} ({})", t.number, t.title, t.workstream);
         }
         return Ok(());
     }
@@ -607,7 +607,7 @@ fn search(matches: &ArgMatches) -> Result<()> {
 
     // TTY with no query: live interactive filter
     if let Some((ws, num, content)) = interactive_search(&tickets)? {
-        println!("{} {:03}", ws, num);
+        println!("{} {}", ws, num);
         render_ticket_content(&content);
     }
 

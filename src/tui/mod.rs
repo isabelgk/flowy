@@ -359,7 +359,7 @@ fn write_ticket_status(ticket: &TuiTicket, new_status: &Status) -> Result<()> {
     write_atomic(path, updated).with_context(|| format!("writing {}", path.display()))?;
     append_log(
         ticket_ws_dir(ticket)?,
-        &format!("{} {:03}", new_status.verb(), ticket.number),
+        &format!("{} {}", new_status.verb(), ticket.number),
     )
 }
 
@@ -367,7 +367,7 @@ fn write_ticket_priority(ticket: &TuiTicket, priority: Priority) -> Result<()> {
     write_priority(&ticket.path, priority)?;
     append_log(
         ticket_ws_dir(ticket)?,
-        &format!("priority {:03} {}", ticket.number, priority.as_str()),
+        &format!("priority {} {}", ticket.number, priority.as_str()),
     )
 }
 
@@ -525,7 +525,7 @@ mod tests {
             "+++\nstatus = \"complete\"\nstatus_note = \"x\"\ntitle = \"T\"\n+++\n\nBody.\n"
         );
         let log = std::fs::read_to_string(dir.path().join("status.md")).unwrap();
-        assert!(log.contains("done 001"), "{log}");
+        assert!(log.contains("done 1"), "{log}");
     }
 
     #[test]
@@ -541,7 +541,7 @@ mod tests {
         let (dir, ticket) = ticket_on_disk("status = \"pending\"\ntitle = \"T\"");
         write_ticket_priority(&ticket, Priority::High).unwrap();
         let log = std::fs::read_to_string(dir.path().join("status.md")).unwrap();
-        assert!(log.contains("priority 001 high"), "{log}");
+        assert!(log.contains("priority 1 high"), "{log}");
     }
 
     // 80x22 puts 16 rows inside the ticket list block, so a half page is 8.

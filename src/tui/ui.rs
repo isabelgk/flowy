@@ -124,7 +124,7 @@ fn render_tickets(f: &mut Frame, app: &mut App, left: Rect, right: Rect) {
             };
             ListItem::new(Line::from(vec![
                 Span::styled(
-                    format!("{:03}", t.number),
+                    format!("{:>3}", t.number),
                     Style::default().fg(Color::Yellow),
                 ),
                 Span::raw("  "),
@@ -163,10 +163,7 @@ fn render_tickets(f: &mut Frame, app: &mut App, left: Rect, right: Rect) {
         let ticket = &app.tickets[idx];
         let color = status_color(&ticket.status);
         let title = Line::from(vec![
-            Span::styled(
-                format!(" {:03}  ", ticket.number),
-                Style::default().fg(color),
-            ),
+            Span::styled(format!(" {}  ", ticket.number), Style::default().fg(color)),
             Span::styled(status_glyph(&ticket.status), Style::default().fg(color)),
             Span::raw(" "),
             Span::styled(status_label(&ticket.status), Style::default().fg(color)),
@@ -246,7 +243,7 @@ fn render_worktrees(f: &mut Frame, app: &mut App, left: Rect, right: Rect) {
             .iter()
             .map(|(num, title)| {
                 Line::from(vec![
-                    Span::styled(format!("{num:03}"), Style::default().fg(Color::Yellow)),
+                    Span::styled(format!("{num:>3}"), Style::default().fg(Color::Yellow)),
                     Span::raw("  "),
                     Span::raw(title.as_str()),
                 ])
