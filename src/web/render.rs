@@ -1,5 +1,5 @@
 use maud::{DOCTYPE, Markup, PreEscaped, html};
-use pulldown_cmark::{Event, Options, Parser};
+use pulldown_cmark::{CowStr, Event, Options, Parser, Tag};
 
 use crate::commands::worktree::{WorktreeInfo, format_age};
 use crate::core::ticket::{Priority, Status, Ticket};
@@ -29,12 +29,52 @@ pub fn markdown(src: &str) -> Markup {
     let events = Parser::new_ext(src, options).map(|event| match event {
         Event::Html(raw) => Event::Text(raw),
         Event::InlineHtml(raw) => Event::Text(raw),
+        Event::Start(Tag::Link {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) => Event::Start(Tag::Link {
+            link_type,
+            dest_url: safe_url(dest_url),
+            title,
+            id,
+        }),
+        Event::Start(Tag::Image {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) => Event::Start(Tag::Image {
+            link_type,
+            dest_url: safe_url(dest_url),
+            title,
+            id,
+        }),
         other => other,
     });
 
     let mut out = String::new();
     pulldown_cmark::html::push_html(&mut out, events);
     PreEscaped(out)
+}
+
+// pulldown-cmark passes any scheme through, and a `javascript:` link runs with
+// this origin's access to the mutating endpoints. Browsers ignore whitespace and
+// control characters inside a scheme, so those are dropped before comparing.
+fn safe_url(url: CowStr<'_>) -> CowStr<'_> {
+    let cleaned: String = url
+        .chars()
+        .filter(|c| !c.is_ascii_control() && !c.is_ascii_whitespace())
+        .collect();
+    let allowed = match cleaned.find([':', '/', '?', '#']) {
+        Some(i) if cleaned[i..].starts_with(':') => matches!(
+            cleaned[..i].to_ascii_lowercase().as_str(),
+            "http" | "https" | "mailto"
+        ),
+        _ => true,
+    };
+    if allowed { url } else { CowStr::Borrowed("#") }
 }
 
 pub fn page(title: &str, nav: &Nav, content: Markup) -> Markup {
@@ -295,4 +335,40 @@ pub fn note(nav: &Nav, workstream: &str, name: &str, body: &str, as_markdown: bo
         }
     };
     page(name, nav, content)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn markdown_neutralizes_script_links() {
+        for src in [
+            "[x](javascript:alert(1))",
+            "<javascript:alert(1)>",
+            "[x](JavaScript&#58;alert(1))",
+            "[x](<java\tscript:alert(1)>)",
+            "![x](data:text/html,hi)",
+        ] {
+            let html = markdown(src).into_string();
+            assert!(
+                html.contains("href=\"#\"") || html.contains("src=\"#\""),
+                "{src}: {html}"
+            );
+        }
+    }
+
+    #[test]
+    fn markdown_keeps_ordinary_links() {
+        for (src, href) in [
+            ("[x](https://example.com)", "https://example.com"),
+            ("[x](mailto:a@b.c)", "mailto:a@b.c"),
+            ("[x](../notes/planning)", "../notes/planning"),
+            ("[x](#journal)", "#journal"),
+            ("[x](a/b:c)", "a/b:c"),
+        ] {
+            let html = markdown(src).into_string();
+            assert!(html.contains(&format!("href=\"{href}\"")), "{src}: {html}");
+        }
+    }
 }
