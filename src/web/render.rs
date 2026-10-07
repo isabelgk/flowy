@@ -7,6 +7,14 @@ use crate::core::ticket::{Priority, Status, Ticket};
 const CSS: &str = include_str!("style.css");
 const SCRIPT: &str = include_str!("script.js");
 
+// Inline so the icon costs no request; `#` is written as `%23` because a bare one
+// would end the data URI.
+const ICON: &str = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>\
+<style>rect{fill:%230b5fd0}@media(prefers-color-scheme:dark){rect{fill:%237fb4ff}}</style>\
+<rect x='2' y='5' width='22' height='6' rx='2'/>\
+<rect x='5' y='13' width='22' height='6' rx='2'/>\
+<rect x='8' y='21' width='22' height='6' rx='2'/></svg>";
+
 // Everything but the unreserved characters is escaped, so a branch like `fix#1`
 // or one with an accent survives as a single path segment and a valid header.
 const SEGMENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
@@ -98,6 +106,7 @@ pub fn page(title: &str, nav: &Nav, content: Markup) -> Markup {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 title { (title) " - flowy" }
+                link rel="icon" type="image/svg+xml" href=(ICON);
                 style { (PreEscaped(CSS)) }
             }
             body {
