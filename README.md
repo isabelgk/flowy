@@ -128,7 +128,8 @@ With a Rust toolchain installed:
 cargo install --git https://github.com/isabelgk/flowy
 ```
 
-Or from a checkout, `just install` (`cargo install --path .`).
+Or from a checkout, `just install` (`cargo install --path .`). The checkout's
+`mise.toml` pins the Rust and `just` versions; `mise install` fetches both.
 
 ## Global options
 
