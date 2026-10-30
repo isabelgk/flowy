@@ -3,6 +3,13 @@
 `flowy` is a Rust CLI for managing bare git repos and per-branch worktrees with
 markdown ticket files.
 
+- [Example](#example)
+- [On-disk layout](#on-disk-layout)
+- [Installation](#installation)
+- [Global options](#global-options)
+- [Commands](#commands)
+- [Claude Code skill](#claude-code-skill)
+
 ## Example
 
 ```console
