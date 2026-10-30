@@ -158,6 +158,23 @@ The quoted delimiter is what makes backticks, quotes, and `$` survive verbatim.
 Building the same text into a `-d "..."` argument means escaping it first, and
 that is where ticket bodies get mangled.
 
+**Editing a ticket body.** Rewrite the body while a ticket is still pending and
+its scope changed during planning, so the acceptance criteria stay true. Once
+work on it has started, append a `flowy ticket journal` entry instead; the
+journal is the record of what changed and why. `flowy ticket edit` has no
+`--body-file`; it runs `$EDITOR` with the ticket path appended, so point
+`EDITOR` at a copy command:
+
+```bash
+f="$(flowy notes path -w <ws>)/tickets/<n>.md"
+cp "$f" <scratch>/<n>.md     # edit the copy; keep the +++ frontmatter intact
+EDITOR="cp <scratch>/<n>.md" flowy ticket edit -w <ws> <n>
+flowy notes log -w <ws> "Ticket <n> re-scoped: <why>."
+```
+
+`EDITOR` is split on spaces, so the copy's path must not contain any. The edit
+writes no `status.md` line by itself, which is what the `notes log` is for.
+
 `status.md` is append-only, and nothing derives state from it. The CLI appends a
 line per ticket event; `flowy notes log` is for the events that are not ticket
 events - planning complete, milestone frozen, workstream closed. Adding a line is
