@@ -1,3 +1,37 @@
 [tools]
 rust = "1.98.1"
-just = "1.59.0"
+
+[tasks.build]
+run = "cargo build"
+
+[tasks.fmt]
+run = "cargo fmt"
+
+[tasks.lint]
+run = "cargo clippy"
+
+[tasks.test]
+run = "cargo test"
+
+[tasks.check]
+run = [{ task = "fmt" }, { task = "lint" }, { task = "test" }]
+
+[tasks.install]
+alias = "i"
+run = "cargo install --path ."
+
+[tasks.skill-link]
+description = "Symlink the skill so edits in this repo take effect immediately"
+run = '''
+mkdir -p "$HOME/.claude/skills"
+rm -rf "$HOME/.claude/skills/flowy"
+ln -s "{{config_root}}/skills/flowy" "$HOME/.claude/skills/flowy"
+'''
+
+[tasks.skill-install]
+description = "Copy the skill, pinning it against further edits here"
+run = '''
+mkdir -p "$HOME/.claude/skills"
+rm -rf "$HOME/.claude/skills/flowy"
+cp -R "{{config_root}}/skills/flowy" "$HOME/.claude/skills/flowy"
+'''

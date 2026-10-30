@@ -125,8 +125,8 @@ With a Rust toolchain installed:
 cargo install --git https://github.com/isabelgk/flowy
 ```
 
-Or from a checkout, `just install` (`cargo install --path .`). The checkout's
-`mise.toml` pins the Rust and `just` versions; `mise install` fetches both.
+Or from a checkout, `mise run install` (`cargo install --path .`). The checkout's
+`mise.toml` pins the Rust version; `mise install` fetches it.
 
 ## Global options
 
@@ -309,8 +309,8 @@ breaking it into tickets, journaling as you go, and archiving when done.
 Install it with:
 
 ```sh
-just skill-link      # symlink into ~/.claude/skills; edits here take effect at once
-just skill-install   # copy into ~/.claude/skills, pinned against further edits
+mise run skill-link      # symlink into ~/.claude/skills; edits here take effect at once
+mise run skill-install   # copy into ~/.claude/skills, pinned against further edits
 ```
 
 Both replace anything already at `~/.claude/skills/flowy`. For a single
