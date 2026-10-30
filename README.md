@@ -180,6 +180,11 @@ moving.
 
 Serve a browser UI for the repo's workstreams over HTTP.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/web-dark.png">
+  <img alt="flowy web showing a ticket with the workstream sidebar" src="docs/web-light.png">
+</picture>
+
 ```sh
 flowy web                      # binds a free port and prints the URL
 flowy web --port 9000 --open   # pin the port and open a browser
