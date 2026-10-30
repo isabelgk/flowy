@@ -84,23 +84,20 @@ project/
         1.md                          # TOML frontmatter encodes status + priority
 ```
 
-A workstream's notes live inside the worktree they describe, so `cd`-ing into a
-worktree gives you its tickets too. Archived workstreams are the exception:
-`wt archive` removes the worktree, so their notes move up to `.flowy/archive/`
-to outlive it. `cache.json` is disposable, but `.flowy/` as a whole is not.
+A workstream's notes live inside its worktree, so `cd`-ing into a worktree
+gives you its tickets too. `wt archive` deletes the worktree, so archived notes
+move to `.flowy/archive/`. You can delete `cache.json`, but keep the rest of
+`.flowy/`.
 
-`.local/` is added to the repo's `.bare/info/exclude` during scaffolding.
-Without it every worktree would report dirty and `git worktree remove` would
-refuse; the entry is local to your clone and never committed.
+Scaffolding adds `.local/` to `.bare/info/exclude` so the notes don't show up
+as uncommitted changes. That file is local to your clone.
 
 Ticket metadata lives in TOML frontmatter (`+++` delimiters) with `title`,
 `status`, and `priority` fields. Status values: `"pending"`, `"complete"`,
 `"wont-implement"`. Priority values: `"high"`, `"medium"`, `"low"`; a ticket with
 no `priority` key ranks as medium, so the field can stay absent.
-Ticket IDs are plain numbers (`1`, `2`, ...); files from older versions named
-`001.md` are read the same way. New numbers are claimed atomically so that
-concurrent `ticket add` runs get distinct numbers rather than the last writer
-overwriting the rest.
+Ticket IDs are plain numbers (`1`, `2`, ...). Older zero-padded files like
+`001.md` still work. Concurrent `ticket add` runs always get distinct numbers.
 
 ## Installation
 
@@ -161,14 +158,12 @@ Manage bare git worktrees.
 | `rename` | `mv` | Rename a workstream: branch, worktree dir, and meta |
 
 `new`, `unarchive`, and `flowy clone` initialize submodules in the worktree they
-check out, recursively. Pass `--no-submodules` to skip it. A failed submodule
-fetch is a warning, not an error: the worktree is still created.
+check out, recursively. Pass `--no-submodules` to skip this. If a submodule
+fails to fetch, flowy prints a warning and still creates the worktree.
 
-`rename <old-name> <new-branch>` renames the git branch, moves the worktree to
-the new safe-name, and updates `meta.toml`. Notes travel with the worktree
-because they live inside it. Worktrees containing submodules (which `git
-worktree move` refuses) are moved manually and their admin pointers repaired.
-An archived workstream must be unarchived before it can be renamed.
+`rename <old-name> <new-branch>` renames the git branch, moves the worktree, and
+updates `meta.toml`. It works on worktrees with submodules, which plain
+`git worktree move` can't handle. Unarchive a workstream before renaming it.
 
 ### `flowy ticket`
 
@@ -188,9 +183,9 @@ Manage markdown tickets. Workstream defaults to the current git branch.
 
 Use `-w / --workstream <NAME>` to target a workstream other than the current branch.
 
-Tickets list high priority first, then medium, then low, and by number within a
-rank. `add` takes `-p / --priority <high|medium|low>`, `priority <ID> <LEVEL>`
-changes it afterward, and `list -p <LEVEL>` narrows the listing to one rank.
+Tickets are sorted by priority, then by number. Set priority with
+`add -p <high|medium|low>` or `priority <ID> <LEVEL>`, and filter with
+`list -p <LEVEL>`.
 
 ```sh
 flowy ticket add -p high "Crash on empty config"
@@ -198,11 +193,9 @@ flowy ticket priority 3 low
 flowy ticket list -p high
 ```
 
-`add`, `done`, and `journal` all take prose. Passing it inline (`-d`,
-`--summary`, or the positional journal text) is fine for a phrase, but multi-line
-markdown containing quotes or backticks has to survive the shell's quoting rules
-first. `--body-file <PATH>` reads it out of band instead, and `--body-file -`
-reads stdin:
+`add`, `done`, and `journal` take text inline (`-d`, `--summary`, or the
+journal argument). For longer markdown, use `--body-file <PATH>`, or
+`--body-file -` to read stdin, and skip the shell quoting:
 
 ```sh
 flowy ticket add "Parser rejects empty input" --body-file - <<'EOF'
@@ -214,13 +207,13 @@ Empty input returns Err rather than panicking.
 EOF
 ```
 
-`--body-file` is mutually exclusive with the inline form on each subcommand.
+You can't pass both `--body-file` and the inline form.
 
 ### `flowy notes`
 
-Read and write the non-ticket files in a workstream: `planning.md`, `next.md`,
+Read and write a workstream's other files: `planning.md`, `next.md`,
 `status.md`, `meta.toml`, and anything under `milestones/`. Workstream defaults
-to the current git branch, same as `ticket`.
+to the current git branch.
 
 | Subcommand | Description |
 |------------|-------------|
@@ -234,10 +227,9 @@ to the current git branch, same as `ticket`.
 
 `NAME` is either an alias (`planning`, `next`, `status`, `meta`) or a path
 relative to the workstream directory (`milestones/1-parser/summary.md`).
-Absolute paths and `..` are refused: the workstream directory is the write
-boundary. `write` and `append` read the body from stdin unless `--body-file
-<PATH>` is given, create parent directories as needed, and refuse an empty body
-rather than truncating a note.
+Paths outside the workstream directory are rejected. `write` and `append`
+read from stdin unless given `--body-file <PATH>`, create parent directories as
+needed, and reject an empty body.
 
 ```sh
 flowy notes write planning < plan.md
@@ -248,25 +240,23 @@ EOF
 flowy notes log "Planning complete. 4 tickets created."
 ```
 
-`milestone` does the mechanical half of a milestone boundary: it picks the next
-number, creates the directory, moves `planning.md` and `next.md` into it (moves,
-not copies, so there is only one live plan), and appends a boundary line to
-`status.md`. Tickets stay where they are, in one numbering sequence for the life
-of the workstream. Writing `summary.md` is left to you. Pending tickets are
-reported rather than treated as an error, since whether an open ticket belongs to
-this milestone or the next one is a judgement call.
+`milestone` creates the next numbered milestone directory, moves `planning.md`
+and `next.md` into it, and logs the boundary in `status.md`. Tickets aren't
+moved and keep one numbering sequence for the whole workstream. It lists any
+pending tickets but doesn't fail on them. Write `summary.md` yourself.
 
 ### `flowy migrate`
 
-Move a repo scaffolded by an older flowy onto the current layout. Worktrees
-under `worktrees/` move to `wt/`, with git's admin pointers and any submodules
-repaired. Notes at `<worktree>/.local/workstream/` are renamed to
-`<worktree>/.local/flowy/`, and notes in the old `notes/workstreams/<name>/`
-layout move there too. The archive is left alone, and anything whose target
-already exists, or notes whose worktree no longer exists, are reported rather
-than moved. Run it from outside `worktrees/`; after a failure
-partway, re-running picks up where it stopped. `--dry-run` reports without
-moving.
+Move a repo created by an older flowy onto the current layout:
+
+- `worktrees/` moves to `wt/`, fixing up git's worktree and submodule pointers.
+- `<worktree>/.local/workstream/` and `notes/workstreams/<name>/` move to
+  `<worktree>/.local/flowy/`.
+
+The archive isn't touched. Anything that would overwrite an existing path, or
+notes with no matching worktree, are skipped and reported. Run it from outside
+`worktrees/`. It's safe to re-run after a failure. `--dry-run` shows what would
+move.
 
 ### `flowy web`
 
@@ -282,40 +272,24 @@ flowy web                      # binds a free port and prints the URL
 flowy web --port 9000 --open   # pin the port and open a browser
 ```
 
-The port is chosen by the OS unless `--port` pins one, so several repos can be
-served at once without colliding. The URL is printed as soon as the listener is
-up.
+Without `--port`, the OS picks a free port, so you can serve several repos at
+once.
 
-The sidebar lists live worktrees; each one gets a filterable ticket list, a
-detail page rendering the ticket's markdown, and forms for the same mutations
-the CLI performs - add, done, won't-implement, reopen, priority, and journal.
-`Edit body` opens a textarea over the markdown below the frontmatter; title,
-status, and priority stay owned by their own forms so a save cannot corrupt the
-fields every other command parses. A save carries a hash of the body it was
-opened with and is refused if the file changed meanwhile, so a browser tab left
-open overnight cannot overwrite what `ticket edit` or an agent wrote in the
-interim.
+The sidebar lists live worktrees. Each has a filterable ticket list, a page per
+ticket, and forms for the CLI's ticket actions: add, done, won't-implement,
+reopen, priority, and journal. `Edit body` edits the markdown below the
+frontmatter; title, status, and priority have their own forms. If the ticket
+changed on disk since you opened the editor, the save is rejected instead of
+overwriting it.
 
-Mutations are written through the same code the CLI uses and logged to
-`status.md`, with one addition: a body edit logs `edited <id>`, which
-`ticket edit` does not, because an edit made in a browser is otherwise invisible.
+Changes are logged to `status.md` like the CLI's. Body edits also log
+`edited <id>`.
 
-Archived workstreams are not served; unarchive one to see it.
+Archived workstreams aren't shown; unarchive one to see it.
 
-The sidebar collapses from the button in the top left, and the choice is
-remembered in the browser; it is applied before the first paint, so a collapsed
-sidebar does not flash open on each navigation. That toggle is the only
-JavaScript on the page.
-
-The sidebar costs a `git status` per worktree, which on a large repo dominates
-the time to render any page. Pages serve the last sidebar snapshot and refresh
-it behind the request, so only the first page of a session waits for git; a
-mutation clears the snapshot so ticket counts never lag an edit you just made.
-
-The server binds `127.0.0.1` and serves a single repo. POSTs are accepted only
-with an `Origin` matching the server's own, so a page in another tab cannot file
-or close tickets through your browser. Requests are handled one at a time, which
-keeps two tabs from interleaving inside a read-modify-write of a ticket file.
+The server listens on `127.0.0.1`, serves one repo, and handles one request at
+a time. It rejects POSTs from other origins, so other sites can't modify your
+tickets.
 
 ### `flowy completions <shell>`
 
@@ -330,21 +304,20 @@ flowy completions fish > ~/.config/fish/completions/flowy.fish
 
 ## Claude Code skill
 
-`skills/flowy/` teaches an agent both the CLI and the workstream style of
-working - planning in writing, decomposing into verifiable tickets, journaling
-implementation, and archiving on completion. Install it by copying it into your
-skills directory:
+`skills/flowy/` is a Claude Code skill for using flowy: writing a plan,
+breaking it into tickets, journaling as you go, and archiving when done.
+Install it with:
 
 ```sh
 just skill-link      # symlink into ~/.claude/skills; edits here take effect at once
 just skill-install   # copy into ~/.claude/skills, pinned against further edits
 ```
 
-Both overwrite whatever is already at `~/.claude/skills/flowy`. To scope the
-skill to one project instead, copy it into that project's `.claude/skills/`.
+Both replace anything already at `~/.claude/skills/flowy`. For a single
+project, copy it into that project's `.claude/skills/` instead.
 
-It exposes seven verbs, and also triggers on the equivalent plain-language
-request:
+It has seven commands, and also responds to the same requests in plain
+language:
 
 ```
 /flowy new igk/my-feature                      # branch + worktree + notes
@@ -356,8 +329,6 @@ request:
 /flowy close igk-my-feature                    # audit + archive
 ```
 
-`milestone` pairs with `flowy notes milestone`: the CLI freezes the plan, and the
-skill decides whether the boundary is real and writes the summary. A workstream
-can outlive several plans, and since `plan` overwrites `planning.md`, a plan that
-reached its goal on a branch with more to do has to be frozen before the next one
-is written.
+`plan` overwrites `planning.md`, so when a plan is finished but the branch
+isn't, run `milestone` first. It calls `flowy notes milestone` and writes the
+summary.
