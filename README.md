@@ -3,6 +3,62 @@
 `flowy` is a Rust CLI for managing bare git repos and per-branch worktrees with
 markdown ticket files.
 
+## Example
+
+```console
+$ flowy wt new -b feat/incremental-builds
+Preparing worktree (new branch 'feat/incremental-builds')
+HEAD is now at 6be9c45 Initial skeleton
+Created worktree feat-incremental-builds
+$ cd wt/feat-incremental-builds
+$ flowy ticket add -p high "Hash page sources and skip unchanged pages"
+Created 1
+$ flowy ticket add "Show skipped/rebuilt counts in build output" \
+    -d 'Print `built 3, skipped 241 in 180ms` so it is obvious the cache is working.'
+Created 4
+
+$ flowy wt ls
++-------------------------+---+-------------+-----------------+
+| Branch                  |   | Last commit | Pending tickets |
++=============================================================+
+| docs/theme-guide        |   | 2d          | 2/2             |
+|-------------------------+---+-------------+-----------------|
+| feat/incremental-builds | * | 1h          | 5/7             |
+|-------------------------+---+-------------+-----------------|
+| fix/rss-dates           |   | 5h          | 2/2             |
+|-------------------------+---+-------------+-----------------|
+| main                    |   | 3d          | 0/0             |
++-------------------------+---+-------------+-----------------+
+
+$ flowy ticket ls
+
+feat-incremental-builds
++---+------------------------------------------------+----------+---------+
+| # | Title                                          | Priority | Status  |
++=========================================================================+
+| 1 | Hash page sources and skip unchanged pages     | high     | pending |
+|---+------------------------------------------------+----------+---------|
+| 3 | Invalidate the cache when lantern.toml changes | medium   | pending |
+|---+------------------------------------------------+----------+---------|
+| 4 | Show skipped/rebuilt counts in build output    | medium   | pending |
+|---+------------------------------------------------+----------+---------|
+| 5 | Parallelize rendering with rayon               | low      | pending |
+|---+------------------------------------------------+----------+---------|
+| 6 | Watch mode: debounce rapid saves               | low      | pending |
++---+------------------------------------------------+----------+---------+
+
+$ flowy ticket show 4
+Show skipped/rebuilt counts in build output
+priority: medium
+
+Print `built 3, skipped 241 in 180ms` so it is obvious the cache is working.
+
+$ flowy ticket done 4 --summary "Printed after every build, including watch mode."
+done 4
+$ flowy ticket journal 1 "Prototype hashes with blake3; a full scan takes 12ms."
+Journal entry added to 1
+```
+
 ## On-disk layout
 
 ```
