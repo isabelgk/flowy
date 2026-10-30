@@ -3,6 +3,11 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and release, e.g. v0.5.0
+        required: true
 
 permissions:
   contents: write
@@ -10,8 +15,12 @@ permissions:
 jobs:
   macos:
     runs-on: macos-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.TAG }}
 
       - name: Install Rust targets
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
@@ -20,10 +29,10 @@ jobs:
         run: |
           for target in aarch64-apple-darwin x86_64-apple-darwin; do
             cargo build --release --locked --target "$target"
-            tar -czf "flowy-$GITHUB_REF_NAME-$target.tar.gz" -C "target/$target/release" flowy
+            tar -czf "flowy-$TAG-$target.tar.gz" -C "target/$target/release" flowy
           done
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes flowy-*.tar.gz
+        run: gh release create "$TAG" --generate-notes flowy-*.tar.gz
