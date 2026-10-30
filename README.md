@@ -95,6 +95,34 @@ Ticket IDs are plain numbers (`1`, `2`, ...); files from older versions named
 concurrent `ticket add` runs get distinct numbers rather than the last writer
 overwriting the rest.
 
+## Installation
+
+### From a release
+
+Each release on the [releases page](https://github.com/isabelgk/flowy/releases)
+has a macOS binary for Apple Silicon (`aarch64-apple-darwin`) and Intel
+(`x86_64-apple-darwin`):
+
+```sh
+VERSION=v0.5.0
+TARGET=aarch64-apple-darwin   # or x86_64-apple-darwin
+curl -fsSL "https://github.com/isabelgk/flowy/releases/download/$VERSION/flowy-$VERSION-$TARGET.tar.gz" | tar -xz
+mv flowy ~/.local/bin/        # or anywhere on your PATH
+```
+
+The binaries are not signed. A copy downloaded through a browser is quarantined
+by macOS; clear that with `xattr -d com.apple.quarantine flowy`.
+
+### From source
+
+With a Rust toolchain installed:
+
+```sh
+cargo install --git https://github.com/isabelgk/flowy
+```
+
+Or from a checkout, `just install` (`cargo install --path .`).
+
 ## Global options
 
 | Flag | Description |
